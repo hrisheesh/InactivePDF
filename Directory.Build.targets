@@ -1,0 +1,5 @@
+<Project>
+  <Target Name="VerifyNoBuildArtifactsInSource" BeforeTargets="Build">
+    <Error Condition="Exists('$(MSBuildProjectDirectory)/bin') And '$(CI)' == 'true'" Text="Build artifacts must not be committed into source directories." />
+  </Target>
+</Project>

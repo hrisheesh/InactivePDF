@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>InactivePDF.Client</RootNamespace>
+    <AssemblyName>InactivePDF.Client</AssemblyName>
+    <PackageId>InactivePDF.Client</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>hrisheesh</Authors>
+    <Description>Typed netstandard2.0 HTTP client for the InactivePDF conversion service.</Description>
+    <PackageTags>pdf;conversion;libreoffice;inactivepdf</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/hrisheesh/InactivePDF</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="10.0.0" />
+    <None Include="../../README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

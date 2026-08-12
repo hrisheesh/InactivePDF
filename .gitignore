@@ -1,0 +1,54 @@
+bin/
+obj/
+.vs/
+.idea/
+TestResults/
+*.user
+*.suo
+*.nupkg
+publish/
+artifacts/
+
+# Only the public GitHub landing-page documentation is tracked. Project planning,
+# phase notes, and component-specific notes remain local to the development tree.
+*.md
+docs/
+!README.md
+
+# Component-specific notes stay local as well.
+WatchFolders/README.md
+src/InactivePDF.Client/README.md
+
+# Local watch-folder inputs, outputs, processing files, and logs.
+WatchFolders/
+!WatchFolders/
+WatchFolders/*
+!WatchFolders/Default/
+WatchFolders/Default/*
+!WatchFolders/Default/Input/
+WatchFolders/Default/Input/*
+!WatchFolders/Default/Input/.gitkeep
+!WatchFolders/Default/Processing/
+WatchFolders/Default/Processing/*
+!WatchFolders/Default/Processing/.gitkeep
+!WatchFolders/Default/Output/
+WatchFolders/Default/Output/*
+!WatchFolders/Default/Output/.gitkeep
+!WatchFolders/Default/Originals/
+WatchFolders/Default/Originals/*
+!WatchFolders/Default/Originals/.gitkeep
+!WatchFolders/Default/Errors/
+WatchFolders/Default/Errors/*
+!WatchFolders/Default/Errors/.gitkeep
+!WatchFolders/Default/Logs/
+WatchFolders/Default/Logs/*
+!WatchFolders/Default/Logs/.gitkeep
+
+# macOS filesystem metadata.
+.DS_Store
+
+# Local smoke-test runtime data.
+.inactivepdf-data/
+.group1-watch-smoke/
+.group2-smoke/
+.group2-smoke2/

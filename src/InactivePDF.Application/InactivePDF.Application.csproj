@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>InactivePDF.Application</RootNamespace>
+    <AssemblyName>InactivePDF.Application</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../InactivePDF.Domain/InactivePDF.Domain.csproj" />
+  </ItemGroup>
+</Project>

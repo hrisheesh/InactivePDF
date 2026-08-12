@@ -1,0 +1,209 @@
+{
+  "Service": {
+    "Urls": null,
+    "ShutdownTimeoutSeconds": 30
+  },
+  "Paths": {
+    "DataRoot": null,
+    "StateRoot": null,
+    "JobRoot": null,
+    "WatchRoot": null,
+    "LibreOfficePath": null,
+    "ConversionWorkerPath": null,
+    "PdfToTextPath": "pdftotext",
+    "PdfToPpmPath": "pdftoppm",
+    "LibreOfficeTimeoutSeconds": 180,
+    "LibreOfficeAdditionalArguments": null
+  },
+  "Api": {
+    "MaximumRequestBytes": 536870912,
+    "MaximumFileBytes": 268435456,
+    "MaximumFiles": 50
+  },
+  "Resources": {
+    "MaximumOutputBytes": 2147483648,
+    "MaximumImagePixels": 50000000,
+    "MinimumFreeDiskBytes": 10737418240,
+    "ConversionTimeoutSeconds": 180,
+    "CopyBufferBytes": 65536
+  },
+  "Workers": {
+    "Count": 1,
+    "MaximumAttempts": 2,
+    "QueueCapacity": 256,
+    "TimeoutSeconds": 240,
+    "MaximumMemoryBytes": 1610612736,
+    "JobLeaseSeconds": 300,
+    "DispatcherPollMilliseconds": 250,
+    "RetryBaseDelayMilliseconds": 250
+  },
+  "Concurrency": {
+    "Office": 1,
+    "Image": 1,
+    "Pdf": 1,
+    "Text": 2
+  },
+  "WatchFolder": {
+    "Root": null,
+    "MaximumConcurrentConversions": 2,
+    "MaximumHeavyConversions": 1,
+    "MaximumMarkupConversions": 1,
+    "MaximumRetries": 1,
+    "ScanIntervalSeconds": 2,
+    "FileStabilityDelaySeconds": 2
+  },
+  "Conversion": {
+    "DefaultProfile": "archive",
+    "DefaultOperation": "ConvertFile",
+    "Profiles": {
+      "Archive": {
+        "PdfVersion": 17,
+        "PreserveJpegData": true,
+        "DownsampleImages": false,
+        "MaximumImageDpi": 0,
+        "JpegQuality": 100,
+        "CompressContentStreams": true,
+        "BestCompression": false,
+        "PreserveSourceMetadata": true,
+        "FontPolicy": "system-fonts-with-fallback",
+        "EncryptionPolicy": "preserve-unencrypted-or-reject-password-protected",
+        "LargeMarkupPolicy": "visual-layout",
+        "StructuralValidation": true
+      },
+      "Compact": {
+        "PdfVersion": 17,
+        "PreserveJpegData": false,
+        "DownsampleImages": true,
+        "MaximumImageDpi": 150,
+        "JpegQuality": 75,
+        "CompressContentStreams": true,
+        "BestCompression": true,
+        "PreserveSourceMetadata": false,
+        "FontPolicy": "system-fonts-with-fallback",
+        "EncryptionPolicy": "none",
+        "LargeMarkupPolicy": "visual-layout",
+        "StructuralValidation": true
+      },
+      "Compatibility": {
+        "PdfVersion": 14,
+        "PreserveJpegData": true,
+        "DownsampleImages": false,
+        "MaximumImageDpi": 0,
+        "JpegQuality": 100,
+        "CompressContentStreams": true,
+        "BestCompression": false,
+        "PreserveSourceMetadata": false,
+        "FontPolicy": "system-fonts-with-fallback",
+        "EncryptionPolicy": "none",
+        "LargeMarkupPolicy": "visual-layout",
+        "StructuralValidation": true
+      }
+    }
+  },
+  "CurrentDefaultsReference": {
+    "Service": {
+      "Urls": "ASP.NET framework default because no URL is explicitly configured",
+      "ShutdownTimeoutSeconds": 30
+    },
+    "Paths": {
+      "DataRootWindows": "C:\\ProgramData\\InactivePDF",
+      "DataRootNonWindows": "<MyDocuments>/InactivePDF",
+      "StateRoot": "<DataRoot>/state",
+      "JobRoot": "<DataRoot>/jobs",
+      "WatchRootWindows": "C:\\InactivePDF\\WatchFolders\\Default",
+      "WatchRootNonWindows": "<MyDocuments>/InactivePDF/WatchFolders/Default",
+      "LibreOfficePathWindows": "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
+      "LibreOfficePathNonWindows": "soffice",
+      "ConversionWorkerPath": "Auto-discovered beside the API or from the build output",
+      "PdfToTextPath": "pdftotext",
+      "PdfToPpmPath": "pdftoppm",
+      "LibreOfficeTimeoutSeconds": 180,
+      "LibreOfficeAdditionalArguments": null
+    },
+    "Api": {
+      "MaximumRequestBytes": 536870912,
+      "MaximumFileBytes": 268435456,
+      "MaximumFiles": 50
+    },
+    "Resources": {
+      "MaximumOutputBytes": 2147483648,
+      "MaximumImagePixels": 50000000,
+      "MinimumFreeDiskBytes": 10737418240,
+      "ConversionTimeoutSeconds": 180,
+      "CopyBufferBytes": 65536
+    },
+    "Workers": {
+      "Count": 1,
+      "MaximumAttempts": 2,
+      "QueueCapacity": 256,
+      "TimeoutSeconds": 240,
+      "MaximumMemoryBytes": 1610612736,
+      "JobLeaseSeconds": 300,
+      "DispatcherPollMilliseconds": 250,
+      "RetryBaseDelayMilliseconds": 250
+    },
+    "Concurrency": {
+      "Office": 1,
+      "Image": 1,
+      "Pdf": 1,
+      "Text": 2
+    },
+    "WatchFolder": {
+      "Root": "Platform default listed above",
+      "MaximumConcurrentConversions": 2,
+      "MaximumHeavyConversions": 1,
+      "MaximumMarkupConversions": 1,
+      "MaximumRetries": 1,
+      "ScanIntervalSeconds": 2,
+      "FileStabilityDelaySeconds": 2
+    },
+    "Conversion": {
+      "DefaultProfile": "archive",
+      "DefaultOperation": "ConvertFile",
+      "Profiles": {
+        "Archive": {
+          "PdfVersion": 17,
+          "PreserveJpegData": true,
+          "DownsampleImages": false,
+          "MaximumImageDpi": 0,
+          "JpegQuality": 100,
+          "CompressContentStreams": true,
+          "BestCompression": false,
+          "PreserveSourceMetadata": true,
+          "FontPolicy": "system-fonts-with-fallback",
+          "EncryptionPolicy": "preserve-unencrypted-or-reject-password-protected",
+          "LargeMarkupPolicy": "visual-layout",
+          "StructuralValidation": true
+        },
+        "Compact": {
+          "PdfVersion": 17,
+          "PreserveJpegData": false,
+          "DownsampleImages": true,
+          "MaximumImageDpi": 150,
+          "JpegQuality": 75,
+          "CompressContentStreams": true,
+          "BestCompression": true,
+          "PreserveSourceMetadata": false,
+          "FontPolicy": "system-fonts-with-fallback",
+          "EncryptionPolicy": "none",
+          "LargeMarkupPolicy": "visual-layout",
+          "StructuralValidation": true
+        },
+        "Compatibility": {
+          "PdfVersion": 14,
+          "PreserveJpegData": true,
+          "DownsampleImages": false,
+          "MaximumImageDpi": 0,
+          "JpegQuality": 100,
+          "CompressContentStreams": true,
+          "BestCompression": false,
+          "PreserveSourceMetadata": false,
+          "FontPolicy": "system-fonts-with-fallback",
+          "EncryptionPolicy": "none",
+          "LargeMarkupPolicy": "visual-layout",
+          "StructuralValidation": true
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="src/InactivePDF.Domain/InactivePDF.Domain.csproj" />
+  <Project Path="src/InactivePDF.Application/InactivePDF.Application.csproj" />
+  <Project Path="src/InactivePDF.ConversionWorker/InactivePDF.ConversionWorker.csproj" />
+  <Project Path="src/InactivePDF.Infrastructure/InactivePDF.Infrastructure.csproj" />
+  <Project Path="src/InactivePDF.Api/InactivePDF.Api.csproj" />
+  <Project Path="src/InactivePDF.Client/InactivePDF.Client.csproj" />
+  <Project Path="tools/InactivePDF.Fidelity/InactivePDF.Fidelity.csproj" />
+  <Project Path="tests/InactivePDF.UnitTests/InactivePDF.UnitTests.csproj" />
+</Solution>

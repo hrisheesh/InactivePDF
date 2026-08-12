@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>InactivePDF.Api</RootNamespace>
+    <AssemblyName>InactivePDF.Api</AssemblyName>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../InactivePDF.Application/InactivePDF.Application.csproj" />
+    <ProjectReference Include="../InactivePDF.Infrastructure/InactivePDF.Infrastructure.csproj" />
+    <ProjectReference Include="../InactivePDF.ConversionWorker/InactivePDF.ConversionWorker.csproj" ReferenceOutputAssembly="false" />
+    <None Include="../../InactivePDF.settings.json" Link="InactivePDF.settings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="CopyConversionWorkerArtifacts" AfterTargets="Build">
+    <ItemGroup>
+      <ConversionWorkerArtifacts Include="$(MSBuildProjectDirectory)/../InactivePDF.ConversionWorker/bin/$(Configuration)/net10.0/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ConversionWorkerArtifacts)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>
