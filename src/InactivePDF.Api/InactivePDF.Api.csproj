@@ -5,6 +5,7 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>
+    <Content Update="wwwroot/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <ProjectReference Include="../InactivePDF.Application/InactivePDF.Application.csproj" />
     <ProjectReference Include="../InactivePDF.Infrastructure/InactivePDF.Infrastructure.csproj" />
     <ProjectReference Include="../InactivePDF.ConversionWorker/InactivePDF.ConversionWorker.csproj" ReferenceOutputAssembly="false" />
