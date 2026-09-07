@@ -159,7 +159,8 @@ public sealed class WatchFolderWorker(
                         new ConversionWorkerRequest(
                             ConversionOperation.ConvertFile,
                             output,
-                            [new ConversionWorkerInput(path, fileName)]),
+                            [new ConversionWorkerInput(path, fileName)],
+                            WatermarkProfile: options.WatermarkProfile),
                         cancellationToken).ConfigureAwait(false);
                     if (!TryMove(path, options.OriginalsPath, fileName))
                         throw new IOException($"Conversion completed but the source could not be moved to the originals folder: {options.OriginalsPath}");

@@ -1,3 +1,4 @@
+#pragma warning disable CA1822
 using InactivePDF.Domain.Contracts;
 using InactivePDF.Domain.Models;
 using InactivePDF.Infrastructure.Resources;
@@ -20,61 +21,63 @@ public sealed class IsolatedConversionService(
         Stream input,
         string fileName,
         CancellationToken cancellationToken = default) =>
-        ConvertFileAsync(input, fileName, "application/octet-stream", DefaultProfile(), cancellationToken);
+        ConvertFileAsync(input, fileName, "application/octet-stream", DefaultProfile(), null, null, cancellationToken);
 
     public Task<IsolatedConversionOutput> ConvertFileAsync(
         Stream input,
         string fileName,
         string profile,
         CancellationToken cancellationToken = default) =>
-        ConvertFileAsync(input, fileName, "application/octet-stream", profile, cancellationToken);
+        ConvertFileAsync(input, fileName, "application/octet-stream", profile, null, null, cancellationToken);
 
     public Task<IsolatedConversionOutput> ConvertFileAsync(
         Stream input,
         string fileName,
         string contentType,
         string profile,
-        CancellationToken cancellationToken = default) =>
-        ConvertAsync([(input, fileName, contentType)], ConversionOperation.ConvertFile, "converted.pdf", profile, cancellationToken);
+        string? watermarkProfile = null, WatermarkOptions? watermark = null, CancellationToken cancellationToken = default) =>
+        ConvertAsync([(input, fileName, contentType)], ConversionOperation.ConvertFile, "converted.pdf", profile, cancellationToken, watermarkProfile, watermark);
 
     public Task<IsolatedConversionOutput> ConvertAndMergeAsync(
         IReadOnlyList<(Stream Content, string FileName)> inputs,
-        CancellationToken cancellationToken = default)
+        string? watermarkProfile = null, WatermarkOptions? watermark = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(inputs);
         if (inputs.Count == 0) throw new ArgumentException("At least one input is required.", nameof(inputs));
-        return ConvertAsync(inputs.Select(input => (input.Content, input.FileName, "application/octet-stream")).ToArray(), ConversionOperation.ConvertAndMerge, "merged.pdf", DefaultProfile(), cancellationToken);
+        return ConvertAsync(inputs.Select(input => (input.Content, input.FileName, "application/octet-stream")).ToArray(), ConversionOperation.ConvertAndMerge, "merged.pdf", DefaultProfile(), cancellationToken, watermarkProfile, watermark);
     }
 
     public Task<IsolatedConversionOutput> ConvertAndMergeAsync(
         IReadOnlyList<(Stream Content, string FileName)> inputs,
         string profile,
-        CancellationToken cancellationToken = default)
+        string? watermarkProfile = null, WatermarkOptions? watermark = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(inputs);
         if (inputs.Count == 0) throw new ArgumentException("At least one input is required.", nameof(inputs));
-        return ConvertAsync(inputs.Select(input => (input.Content, input.FileName, "application/octet-stream")).ToArray(), ConversionOperation.ConvertAndMerge, "merged.pdf", profile, cancellationToken);
+        return ConvertAsync(inputs.Select(input => (input.Content, input.FileName, "application/octet-stream")).ToArray(), ConversionOperation.ConvertAndMerge, "merged.pdf", profile, cancellationToken, watermarkProfile, watermark);
     }
 
     public Task<IsolatedConversionOutput> ConvertAndMergeAsync(
         IReadOnlyList<(Stream Content, string FileName, string ContentType)> inputs,
         string profile,
+        string? watermarkProfile = null,
+        WatermarkOptions? watermark = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(inputs);
         if (inputs.Count == 0) throw new ArgumentException("At least one input is required.", nameof(inputs));
-        return ConvertAsync(inputs, ConversionOperation.ConvertAndMerge, "merged.pdf", profile, cancellationToken);
+        return ConvertAsync(inputs, ConversionOperation.ConvertAndMerge, "merged.pdf", profile, cancellationToken, watermarkProfile, watermark);
     }
 
     public Task<IsolatedConversionOutput> CreateTextPdfAsync(
         string text,
         CancellationToken cancellationToken = default)
-        => CreateTextPdfAsync(text, DefaultProfile(), cancellationToken);
+        => CreateTextPdfAsync(text, DefaultProfile(), null, null, cancellationToken);
 
     public async Task<IsolatedConversionOutput> CreateTextPdfAsync(
         string text,
         string profile,
-        CancellationToken cancellationToken = default)
+        string? watermarkProfile = null, WatermarkOptions? watermark = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(text);
         if (Encoding.UTF8.GetByteCount(text) > resourcePolicy.MaximumInputBytes)
@@ -91,7 +94,7 @@ public sealed class IsolatedConversionService(
                     ConversionOperation.CreateTextPdf,
                     outputPath,
                     [new ConversionWorkerInput(inputPath, "body.txt", "text/plain")],
-                profile),
+                profile, watermark, watermarkProfile),
                 cancellationToken).ConfigureAwait(false);
             return OpenOutput(workspace, outputPath, "text.pdf");
         }
@@ -107,7 +110,7 @@ public sealed class IsolatedConversionService(
         ConversionOperation operation,
         string downloadName,
         string profile,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string? watermarkProfile = null, WatermarkOptions? watermark = null)
     {
         var workspace = await workspaceFactory.CreateAsync(Guid.NewGuid(), cancellationToken).ConfigureAwait(false);
         try
@@ -127,7 +130,7 @@ public sealed class IsolatedConversionService(
             }
 
             var outputPath = Path.Combine(workspace.Workspace.OutputPath, "result.pdf");
-            await worker.ConvertAsync(new ConversionWorkerRequest(operation, outputPath, storedInputs, profile), cancellationToken).ConfigureAwait(false);
+            await worker.ConvertAsync(new ConversionWorkerRequest(operation, outputPath, storedInputs, profile, watermark, watermarkProfile), cancellationToken).ConfigureAwait(false);
             return OpenOutput(workspace, outputPath, downloadName);
         }
         catch

@@ -38,7 +38,8 @@ internal static class JobEndpoints
             }
             var profile = form["profile"].ToString();
             if (string.IsNullOrWhiteSpace(profile)) profile = Environment.GetEnvironmentVariable("INACTIVEPDF_DEFAULT_PROFILE") ?? "archive";
-            var requestModel = new ConversionRequest(correlationId, operation, documentInputs, new ConversionOptions(profile));
+            var watermarkProfile = form["watermarkProfile"].ToString();
+            var requestModel = new ConversionRequest(correlationId, operation, documentInputs, new ConversionOptions(profile, WatermarkProfile: string.IsNullOrWhiteSpace(watermarkProfile) ? null : watermarkProfile));
             ConversionJob job;
             try { job = coordinator.Accept(requestModel); }
             catch (ConversionRequestValidationException exception) { return Results.ValidationProblem(exception.Errors.ToDictionary(error => error.Code, error => new[] { error.Message })); }

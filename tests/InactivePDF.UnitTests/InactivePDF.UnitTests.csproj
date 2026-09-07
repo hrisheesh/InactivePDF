@@ -14,6 +14,7 @@
     <ProjectReference Include="../../src/InactivePDF.Client/InactivePDF.Client.csproj" />
     <ProjectReference Include="../../src/InactivePDF.Domain/InactivePDF.Domain.csproj" />
     <ProjectReference Include="../../src/InactivePDF.Infrastructure/InactivePDF.Infrastructure.csproj" />
+    <ProjectReference Include="../../src/InactivePDF.Api/InactivePDF.Api.csproj" />
     <None Include="../../InactivePDF.settings.json" Link="InactivePDF.settings.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

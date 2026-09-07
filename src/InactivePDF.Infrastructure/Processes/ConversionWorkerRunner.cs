@@ -35,6 +35,23 @@ public static class ConversionWorkerRunner
                 ResourcePolicy.FromEnvironment(),
                 new RtfFastPathConverter(new PdfTextGenerator()));
             await converter.ConvertRequestToFileAsync(request).ConfigureAwait(false);
+            var watermark = request.Watermark;
+            if (watermark is null && !string.IsNullOrWhiteSpace(request.WatermarkProfile))
+            {
+                var profilePath = Environment.GetEnvironmentVariable("INACTIVEPDF_WATERMARK_PROFILES_PATH");
+                if (!string.IsNullOrWhiteSpace(profilePath) && File.Exists(profilePath))
+                {
+                    await using var profileStream = File.OpenRead(profilePath);
+                    var profiles = await JsonSerializer.DeserializeAsync<Dictionary<string, WatermarkOptions>>(profileStream).ConfigureAwait(false);
+                    profiles?.TryGetValue(request.WatermarkProfile, out watermark);
+                }
+            }
+            if (watermark is not null)
+            {
+                var temporary = request.OutputPath + ".watermark.tmp";
+                new PdfWatermarkService().Apply(request.OutputPath, temporary, watermark);
+                File.Move(temporary, request.OutputPath, overwrite: true);
+            }
             return 0;
         }
         catch (ConversionFormatException exception)

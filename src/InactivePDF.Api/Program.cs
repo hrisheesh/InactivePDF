@@ -40,6 +40,7 @@ builder.Services.AddSingleton<IProcessTreeController, ProcessTreeController>();
 var dataRoot = ResolveDataRoot();
 var stateRoot = ResolveChildPath("INACTIVEPDF_STATE_PATH", Path.Combine(dataRoot, "state"));
 var jobRoot = ResolveChildPath("INACTIVEPDF_JOBS_PATH", Path.Combine(dataRoot, "jobs"));
+Environment.SetEnvironmentVariable("INACTIVEPDF_WATERMARK_PROFILES_PATH", Path.Combine(jobRoot, "watermark-profiles.json"));
 var requestLimits = ApiRequestLimits.FromEnvironment();
 builder.Services.AddSingleton(requestLimits);
 builder.Services.AddSingleton(ResourcePolicy.FromEnvironment());
@@ -53,6 +54,8 @@ builder.Services.AddSingleton(new WorkspaceOptions { RootPath = jobRoot });
 builder.Services.AddSingleton<IJobWorkspaceFactory, FileSystemJobWorkspaceFactory>();
 builder.Services.AddSingleton<JobWorkspaceService>();
 builder.Services.AddSingleton<IsolatedConversionWorker>();
+builder.Services.AddSingleton<IWatermarkService, PdfWatermarkService>();
+builder.Services.AddSingleton<WatermarkProfileStore>();
 builder.Services.AddSingleton<LibreOfficeSessionHost>();
 builder.Services.AddHostedService<LibreOfficeSessionLifecycle>();
 builder.Services.AddSingleton<IsolatedConversionService>();
@@ -71,6 +74,30 @@ builder.Services.AddHealthChecks()
     .AddCheck<ConversionReadinessHealthCheck>("conversion-readiness", tags: ["ready"]);
 
 var app = builder.Build();
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
+var apiToken = Environment.GetEnvironmentVariable("INACTIVEPDF_API_TOKEN");
+if (!string.IsNullOrWhiteSpace(apiToken))
+{
+    app.Use(async (context, next) =>
+    {
+        if (context.Request.Path.StartsWithSegments("/health") || context.Request.Path.StartsWithSegments("/ready"))
+        {
+            await next();
+            return;
+        }
+        var supplied = context.Request.Headers.Authorization.ToString();
+        var expected = $"Bearer {apiToken}";
+        if (supplied.Length != expected.Length || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(supplied), System.Text.Encoding.UTF8.GetBytes(expected)))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsJsonAsync(new { code = "unauthorized", message = "A valid bearer token is required." });
+            return;
+        }
+        await next();
+    });
+}
 
 app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
 {
@@ -87,6 +114,17 @@ app.MapHealthChecks("/health");
 app.MapHealthChecks("/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready", StringComparer.OrdinalIgnoreCase) });
 JobEndpoints.Map(app);
 CompatibilityEndpoints.Map(app);
+app.MapGet("/v1/watermark-profiles", (WatermarkProfileStore store) => Results.Ok(store.List()));
+app.MapGet("/v1/watermark-profiles/{name}", (string name, WatermarkProfileStore store) => store.TryGet(name, out var profile) ? Results.Ok(profile) : Results.NotFound());
+app.MapPut("/v1/watermark-profiles/{name}", (string name, WatermarkOptions profile, WatermarkProfileStore store) =>
+{
+    var errors = InactivePDF.Application.Watermarks.WatermarkProfileValidator.Validate(profile);
+    if (errors.Count > 0) return Results.ValidationProblem(errors.Select((error, index) => new KeyValuePair<string, string[]>(index.ToString(System.Globalization.CultureInfo.InvariantCulture), [error])).ToDictionary());
+    if (string.IsNullOrWhiteSpace(name) || name.Length > 64) return Results.BadRequest(new { code = "invalid_profile_name" });
+    store.Save(name, profile);
+    return Results.Ok(profile);
+});
+app.MapDelete("/v1/watermark-profiles/{name}", (string name, WatermarkProfileStore store) => store.Delete(name) ? Results.NoContent() : Results.NotFound());
 app.MapGet("/v1/capabilities", () => Results.Ok(new
 {
     service = "InactivePDF",

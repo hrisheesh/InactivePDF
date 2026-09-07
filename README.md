@@ -314,6 +314,14 @@ Age and size limits are independent: `0` disables that limit. Cleanup removes th
 
 ## Operations and diagnostics
 
+## Watermarks and authentication
+
+Watermark profiles are managed with `GET`, `PUT`, and `DELETE /v1/watermark-profiles/{name}`. A profile is JSON using `WatermarkOptions` (text or image, opacity, rotation, placement, page ranges, tiling, headers, footers, and page numbering). Conversion requests may select a profile with `watermarkProfile`; JSON requests may also provide a direct `watermark` object. Watch-folder deployments can set `INACTIVEPDF_WATCH_WATERMARK_PROFILE`.
+
+Set `INACTIVEPDF_API_TOKEN` on private deployments. When set, every endpoint except `/health` and `/ready` requires `Authorization: Bearer <token>`. Keep the token in the service manager's protected secret store and use HTTPS at the reverse proxy. Watermark image assets must be kept in the configured asset directory and are never accepted from arbitrary filesystem paths.
+
+The built-in browser editor is available at `/` and provides profile selection, editable watermark settings, and a live first-page preview. It is an operator tool, not a replacement for final PDF fidelity validation.
+
 Endpoints:
 
 | Endpoint | Purpose |

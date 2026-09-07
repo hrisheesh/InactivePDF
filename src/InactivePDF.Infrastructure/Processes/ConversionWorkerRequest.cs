@@ -12,6 +12,8 @@ public sealed record ConversionWorkerRequest(
     [property: JsonConverter(typeof(JsonStringEnumConverter))] ConversionOperation Operation,
     string OutputPath,
     IReadOnlyList<ConversionWorkerInput> Inputs,
-    string Profile = "archive");
+    string Profile = "archive",
+    WatermarkOptions? Watermark = null,
+    string? WatermarkProfile = null);
 
 public sealed record ConversionWorkerInput(string Path, string FileName, string ContentType = "application/octet-stream");

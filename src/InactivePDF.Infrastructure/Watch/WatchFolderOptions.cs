@@ -12,7 +12,8 @@ public sealed record WatchFolderOptions(
     long OfficeReservationBytes = 1_207_959_552,
     long ImageReservationBytes = 1_073_741_824,
     long MarkupReservationBytes = 268_435_456,
-    long LargeFileReservationBytes = 67_108_864)
+    long LargeFileReservationBytes = 67_108_864,
+    string? WatermarkProfile = null)
 {
     public string InputPath => Path.Combine(RootPath, "Input");
     public string OutputPath => Path.Combine(RootPath, "Output");
@@ -38,7 +39,8 @@ public sealed record WatchFolderOptions(
             ParseBytes("INACTIVEPDF_WATCH_OFFICE_RESERVATION_BYTES", 1_207_959_552),
             ParseBytes("INACTIVEPDF_WATCH_IMAGE_RESERVATION_BYTES", 1_073_741_824),
             ParseBytes("INACTIVEPDF_WATCH_MARKUP_RESERVATION_BYTES", 268_435_456),
-            ParseBytes("INACTIVEPDF_WATCH_LARGE_FILE_RESERVATION_BYTES", 67_108_864));
+            ParseBytes("INACTIVEPDF_WATCH_LARGE_FILE_RESERVATION_BYTES", 67_108_864),
+            Environment.GetEnvironmentVariable("INACTIVEPDF_WATCH_WATERMARK_PROFILE"));
     }
 
     private static int ParsePositive(string name, int fallback) => int.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value > 0 ? value : fallback;
