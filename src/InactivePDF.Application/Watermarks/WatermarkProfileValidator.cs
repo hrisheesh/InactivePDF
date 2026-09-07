@@ -14,7 +14,7 @@ public static class WatermarkProfileValidator
         if (options.Opacity is < 0 or > 1) errors.Add("Opacity must be between 0 and 1.");
         if (options.Rotation is < -360 or > 360) errors.Add("Rotation must be between -360 and 360 degrees.");
         if (string.IsNullOrWhiteSpace(options.Pages)) errors.Add("Pages is required.");
-        else if (!PageRanges.TryParse(options.Pages, out _)) errors.Add("Pages must be all, first, last, odd, even, or a valid range such as 1,3-5.");
+        else if (!PageRanges.TryParse(options.Pages, out _)) errors.Add("Pages must be all, none, first, last, odd, even, or a valid range such as 1,3-5.");
         if (options.Width is <= 0 or > 2000) errors.Add("Width must be between 0 and 2000 points when specified.");
         if (options.Height is <= 0 or > 2000) errors.Add("Height must be between 0 and 2000 points when specified.");
         if (string.IsNullOrWhiteSpace(options.Color) || options.Color.Length != 7 || options.Color[0] != '#' || !options.Color.Skip(1).All(Uri.IsHexDigit)) errors.Add("Color must be a six-digit hexadecimal value such as #808080.");
@@ -30,7 +30,7 @@ public static class WatermarkProfileValidator
         {
             var result = new HashSet<int>();
             var normalized = value.Trim().ToLowerInvariant();
-            if (normalized is "all" or "first" or "last" or "odd" or "even") { pages = result; return true; }
+            if (normalized is "all" or "none" or "first" or "last" or "odd" or "even") { pages = result; return true; }
             var parts = normalized.Split(',', StringSplitOptions.TrimEntries);
             if (parts.Any(string.IsNullOrWhiteSpace)) { pages = result; return false; }
             foreach (var part in parts)

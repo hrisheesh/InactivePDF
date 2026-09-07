@@ -29,6 +29,9 @@ GET    /v1/watermark-profiles
 GET    /v1/watermark-profiles/{name}
 PUT    /v1/watermark-profiles/{name}
 DELETE /v1/watermark-profiles/{name}
+GET    /v1/watermark-assets
+GET    /v1/watermark-assets/{name}
+POST   /v1/watermark-assets   (multipart field: file)
 ```
 
 Example profile:
@@ -42,7 +45,7 @@ Example profile:
 }
 ```
 
-Select a saved profile with the `watermarkProfile` field on `POST /v1/jobs` or the synchronous conversion routes. Synchronous JSON conversion also accepts a direct `watermark` object. Multipart clients send the same object as a JSON form field named `watermark`. Image profiles must use an asset filename from the configured `INACTIVEPDF_WATERMARK_ASSET_PATH`; absolute paths, traversal, symlinks, and reparse points are rejected.
+Select a saved profile with the `watermarkProfile` field on `POST /v1/jobs` or the synchronous conversion routes. Synchronous JSON conversion also accepts a direct `watermark` object. Multipart clients send the same object as a JSON form field named `watermark`. Image profiles must use an asset filename from the configured `INACTIVEPDF_WATERMARK_ASSET_PATH`; the browser editor can upload supported image files through the protected asset endpoint. Absolute paths, traversal, symlinks, and reparse points are rejected.
 
 The .NET client exposes `WatermarkProfile` and `WatermarkJson` on `InactivePdfJobRequest`, plus direct-watermark methods for file, merge, and text conversion. The client does not store credentials; add `Authorization: Bearer <token>` to the supplied `HttpClient` before constructing `InactivePdfClient`.
 
@@ -348,7 +351,7 @@ Watermark profiles are managed with `GET`, `PUT`, and `DELETE /v1/watermark-prof
 
 Set `INACTIVEPDF_API_TOKEN` on private deployments. When set, every endpoint except `/health` and `/ready` requires `Authorization: Bearer <token>`. Keep the token in the service manager's protected secret store and use HTTPS at the reverse proxy. Watermark image assets must be kept in the configured asset directory and are never accepted from arbitrary filesystem paths.
 
-The built-in browser editor is available at `/` and provides profile selection, editable watermark settings, and a live first-page preview. It is an operator tool, not a replacement for final PDF fidelity validation.
+The built-in browser editor is available at `/` and provides profile selection, asset browsing/upload, editable watermark settings, and a live preview. The preview makes layer behavior explicit and reflects nine placement anchors, opacity, rotation, page selection, headers, footers, page numbers, and tiling. It is an operator tool, not a replacement for final PDF fidelity validation.
 
 Endpoints:
 

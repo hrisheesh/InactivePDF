@@ -46,8 +46,12 @@ public sealed class PdfWatermarkService : IWatermarkService
                         for (var y = 0d; y < document.Pages[index].Height.Point; y += Math.Max(size.Height + 40, 80))
                             DrawText(graphics, text, font, brush, new XPoint(x, y), size, options.Rotation);
             }
-            var header = options.Header?.Replace("{page}", (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)).Replace("{pages}", document.PageCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            var footer = options.Footer?.Replace("{page}", (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)).Replace("{pages}", document.PageCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var pageNumber = (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var totalPages = document.PageCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var formattedPageNumber = (options.PageNumberFormat ?? "{page}/{pages}").Replace("{page}", pageNumber).Replace("{pages}", totalPages);
+            var header = options.Header?.Replace("{page}", pageNumber).Replace("{pages}", totalPages);
+            var footer = options.Footer?.Replace("{page}", pageNumber).Replace("{pages}", totalPages);
+            if (string.IsNullOrWhiteSpace(footer) && !string.IsNullOrWhiteSpace(options.PageNumberFormat)) footer = formattedPageNumber;
             if (!string.IsNullOrWhiteSpace(header)) graphics.DrawString(header, font, brush, new XRect(12, 8, document.Pages[index].Width.Point - 24, 24), XStringFormats.TopCenter);
             if (!string.IsNullOrWhiteSpace(footer)) graphics.DrawString(footer, font, brush, new XRect(12, document.Pages[index].Height.Point - 30, document.Pages[index].Width.Point - 24, 24), XStringFormats.BottomCenter);
         }
@@ -115,6 +119,7 @@ public sealed class PdfWatermarkService : IWatermarkService
     {
         var normalized = pages.Trim().ToLowerInvariant();
         if (normalized == "all") return true;
+        if (normalized == "none") return false;
         if (normalized == "first") return page == 1;
         if (normalized == "last") return page == total;
         if (normalized == "odd") return page % 2 == 1;

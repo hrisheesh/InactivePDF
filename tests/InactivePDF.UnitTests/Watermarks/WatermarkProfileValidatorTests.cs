@@ -33,6 +33,13 @@ public sealed class WatermarkProfileValidatorTests
         Assert.Empty(errors);
     }
 
+    [Fact]
+    public void AcceptsNoPagesSelection()
+    {
+        var errors = WatermarkProfileValidator.Validate(new WatermarkOptions(Text: "DRAFT", Pages: "none"));
+        Assert.Empty(errors);
+    }
+
     [Theory]
     [InlineData("1-")]
     [InlineData("1,,2")]

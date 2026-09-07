@@ -101,4 +101,36 @@ public sealed class WatermarkApiIntegrationTests
             try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch (IOException) { }
         }
     }
+
+    [Fact]
+    public async Task WatermarkAssetCanBeUploadedListedAndServedFromProtectedRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "InactivePDF-api-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var previous = Environment.GetEnvironmentVariable("INACTIVEPDF_DATA_PATH");
+        var oldToken = Environment.GetEnvironmentVariable("INACTIVEPDF_API_TOKEN");
+        Environment.SetEnvironmentVariable("INACTIVEPDF_DATA_PATH", root);
+        Environment.SetEnvironmentVariable("INACTIVEPDF_API_TOKEN", null);
+        try
+        {
+            using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+            using var multipart = new MultipartFormDataContent();
+            multipart.Add(new ByteArrayContent("test-image"u8.ToArray()), "file", "brand.png");
+            var upload = await client.PostAsync("/v1/watermark-assets", multipart);
+            Assert.Equal(HttpStatusCode.OK, upload.StatusCode);
+            var names = await client.GetFromJsonAsync<string[]>("/v1/watermark-assets");
+            Assert.Contains("brand.png", names!);
+            var asset = await client.GetAsync("/v1/watermark-assets/brand.png");
+            Assert.Equal(HttpStatusCode.OK, asset.StatusCode);
+            Assert.Equal("test-image", await asset.Content.ReadAsStringAsync());
+            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/v1/watermark-assets/..%2Foutside.png")).StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("INACTIVEPDF_DATA_PATH", previous);
+            Environment.SetEnvironmentVariable("INACTIVEPDF_API_TOKEN", oldToken);
+            try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch (IOException) { }
+        }
+    }
 }
