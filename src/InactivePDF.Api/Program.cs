@@ -76,6 +76,7 @@ builder.Services.AddHealthChecks()
 var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapGet("/", () => Results.File(Path.Combine(AppContext.BaseDirectory, "wwwroot", "index.html"), "text/html"));
 
 var apiToken = Environment.GetEnvironmentVariable("INACTIVEPDF_API_TOKEN");
 if (!string.IsNullOrWhiteSpace(apiToken))
