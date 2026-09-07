@@ -8,6 +8,7 @@ TestResults/
 *.nupkg
 publish/
 artifacts/
+.worktrees/
 
 # Only the public GitHub landing-page documentation is tracked. Project planning,
 # phase notes, and component-specific notes remain local to the development tree.
