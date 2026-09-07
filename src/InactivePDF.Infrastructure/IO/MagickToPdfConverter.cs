@@ -12,16 +12,26 @@ public sealed class MagickToPdfConverter : IImageToPdfConverter
 {
     private const double PointsPerInch = 72d;
     private const double DefaultDpi = 96d;
-    private readonly long _maximumPixels = ResolveMaximumPixels();
+    private readonly ResourcePolicy _resourcePolicy;
 
-    public MagickToPdfConverter()
+    public MagickToPdfConverter(ResourcePolicy? resourcePolicy = null)
     {
-        // ImageMagick is isolated in the conversion worker. These limits keep a malformed
-        // decompression bomb from reserving an unbounded pixel cache before our per-frame check.
-        ResourceLimits.Area = (ulong)_maximumPixels;
-        ResourceLimits.Width = (ulong)_maximumPixels;
-        ResourceLimits.Height = (ulong)_maximumPixels;
-        ResourceLimits.ListLength = 512;
+        _resourcePolicy = resourcePolicy ?? ResourcePolicy.FromEnvironment();
+
+        // ImageMagick is isolated in the conversion worker. The pixel-cache limits are
+        // deliberately stricter than ImageMagick's machine-relative defaults so a single
+        // hostile image cannot consume the server. Excess pixels spill to the configured
+        // map/disk budgets instead of growing the process without a bound.
+        ResourceLimits.Area = checked((ulong)_resourcePolicy.MaximumImagePixels);
+        ResourceLimits.Width = checked((ulong)_resourcePolicy.MaximumImageWidth);
+        ResourceLimits.Height = checked((ulong)_resourcePolicy.MaximumImageHeight);
+        ResourceLimits.ListLength = checked((ulong)_resourcePolicy.MaximumImageFrames);
+        ResourceLimits.Memory = checked((ulong)_resourcePolicy.ImageMemoryBytes);
+        ResourceLimits.Disk = checked((ulong)_resourcePolicy.ImageDiskBytes);
+        ResourceLimits.MaxMemoryRequest = checked((ulong)_resourcePolicy.ImageMemoryBytes);
+        ResourceLimits.Time = checked((ulong)Math.Max(1, _resourcePolicy.MaximumDuration.TotalSeconds));
+        if (_resourcePolicy.ImageThreadCount > 0)
+            ResourceLimits.Thread = checked((ulong)_resourcePolicy.ImageThreadCount);
     }
 
     public ImageConversionResult Convert(IReadOnlyList<string> inputPaths, string outputPath, PdfOutputProfile? profile = null)
@@ -54,48 +64,117 @@ public sealed class MagickToPdfConverter : IImageToPdfConverter
 
     private void AddImagePages(PdfDocument document, string path, PdfOutputProfile profile)
     {
-        var format = SupportedFormatCatalog.GetRequired(Path.GetExtension(path));
-        _ = InputFormatValidator.Validate(path, Path.GetFileName(path));
-        if (profile.PreserveJpegData && format.Extension is (".jpg" or ".jpeg") && IsNormalOrientation(path))
+        try
         {
-            AddPreservedJpegPage(document, path);
+            var format = SupportedFormatCatalog.GetRequired(Path.GetExtension(path));
+            _ = InputFormatValidator.Validate(path, Path.GetFileName(path));
+            if (profile.PreserveJpegData && format.Extension is (".jpg" or ".jpeg") && IsNormalOrientation(path))
+            {
+                try
+                {
+                    AddPreservedJpegPage(document, path);
+                    return;
+                }
+                catch (InvalidOperationException)
+                {
+                    // PDFsharp Core intentionally supports only common JPEG variants.
+                    // Decode through ImageMagick and embed a lossless PNG fallback instead
+                    // of rejecting a valid JPEG or silently re-encoding it to JPEG.
+                }
+                catch (ArgumentException)
+                {
+                    // Treat other PDFsharp image-parser incompatibilities the same way.
+                }
+                catch (NotSupportedException)
+                {
+                    // Keep valid but unsupported Core image variants on the decoded path.
+                }
+            }
+
+            AddDecodedImagePages(document, path, profile);
+        }
+        catch (ConversionFormatException)
+        {
+            throw;
+        }
+        catch (MagickException exception)
+        {
+            throw new ConversionFormatException(
+                "invalid_image",
+                $"The image '{Path.GetFileName(path)}' could not be decoded safely: {exception.Message}",
+                exception);
+        }
+    }
+
+    private void AddDecodedImagePages(PdfDocument document, string path, PdfOutputProfile profile)
+    {
+        var extension = Path.GetExtension(path);
+        if (extension is not (".gif" or ".tif" or ".tiff"))
+        {
+            using var image = new MagickImage(path);
+            AddDecodedFramePage(document, image, path, 0, profile);
             return;
         }
 
         using var frames = new MagickImageCollection(path);
+        if (frames.Count == 1)
+        {
+            using var image = frames[0].Clone();
+            frames.Clear();
+            AddDecodedFramePage(document, image, path, 0, profile);
+            return;
+        }
+
         var frameIndex = 0;
         foreach (var frame in frames)
         {
-            frame.AutoOrient();
-            var pixels = checked((long)frame.Width * frame.Height);
-            if (pixels > _maximumPixels)
-                throw new InvalidDataException($"Image '{path}' frame {frameIndex} contains {pixels} pixels, exceeding the configured limit of {_maximumPixels}.");
+            if (frameIndex >= _resourcePolicy.MaximumImageFrames)
+                throw new InvalidDataException($"Image '{path}' contains more than {_resourcePolicy.MaximumImageFrames} frames.");
 
-            if (profile.DownsampleImages && profile.MaximumImageDpi > 0)
-                Downsample(frame, profile.MaximumImageDpi);
-
-            using var encoded = new MemoryStream();
-            if (profile.DownsampleImages && !frame.HasAlpha)
-            {
-                frame.Quality = (uint)Math.Clamp(profile.JpegQuality, 1, 100);
-                frame.Write(encoded, MagickFormat.Jpeg);
-            }
-            else
-            {
-                frame.Write(encoded, MagickFormat.Png);
-            }
-            encoded.Position = 0;
-
-            var page = document.AddPage();
-            page.Width = XUnit.FromPoint(ToPoints((int)frame.Width, frame.Density.X));
-            page.Height = XUnit.FromPoint(ToPoints((int)frame.Height, frame.Density.Y));
-            using var xImage = XImage.FromStream(encoded);
-            using var graphics = XGraphics.FromPdfPage(page);
-            graphics.DrawImage(xImage, 0, 0, page.Width.Point, page.Height.Point);
+            AddDecodedFramePage(document, frame, path, frameIndex, profile);
             frameIndex++;
         }
 
         if (frameIndex == 0) throw new InvalidDataException($"Image '{path}' contains no frames.");
+    }
+
+    private void AddDecodedFramePage(PdfDocument document, IMagickImage<byte> frame, string path, int frameIndex, PdfOutputProfile profile)
+    {
+        frame.AutoOrient();
+        var pixels = checked((long)frame.Width * frame.Height);
+        if (pixels > _resourcePolicy.MaximumImagePixels)
+            throw new InvalidDataException($"Image '{path}' frame {frameIndex} contains {pixels} pixels, exceeding the configured limit of {_resourcePolicy.MaximumImagePixels}.");
+        if (frame.Width > _resourcePolicy.MaximumImageWidth || frame.Height > _resourcePolicy.MaximumImageHeight)
+            throw new InvalidDataException($"Image '{path}' frame {frameIndex} has dimensions {frame.Width}x{frame.Height}, exceeding the configured limit of {_resourcePolicy.MaximumImageWidth}x{_resourcePolicy.MaximumImageHeight}.");
+
+        if (profile.DownsampleImages && profile.MaximumImageDpi > 0)
+            Downsample(frame, profile.MaximumImageDpi);
+
+        var outputFormat = profile.DownsampleImages && !frame.HasAlpha ? MagickFormat.Jpeg : MagickFormat.Png;
+        var temporary = Path.Combine(Path.GetTempPath(), $"inactivepdf-image-{Guid.NewGuid():N}{(outputFormat == MagickFormat.Jpeg ? ".jpg" : ".png")}");
+        var width = frame.Width;
+        var height = frame.Height;
+        var densityX = frame.Density.X;
+        var densityY = frame.Density.Y;
+        try
+        {
+            if (outputFormat == MagickFormat.Jpeg)
+                frame.Quality = (uint)Math.Clamp(profile.JpegQuality, 1, 100);
+            frame.Write(temporary, outputFormat);
+
+            var page = document.AddPage();
+            page.Width = XUnit.FromPoint(ToPoints((int)width, densityX));
+            page.Height = XUnit.FromPoint(ToPoints((int)height, densityY));
+            using var xImage = XImage.FromFile(temporary);
+            using var graphics = XGraphics.FromPdfPage(page);
+            graphics.DrawImage(xImage, 0, 0, page.Width.Point, page.Height.Point);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     private static void AddPreservedJpegPage(PdfDocument document, string path)
@@ -121,8 +200,10 @@ public sealed class MagickToPdfConverter : IImageToPdfConverter
 
     private static bool IsNormalOrientation(string path)
     {
-        using var image = new MagickImage(path);
-        var orientation = image.Orientation.ToString();
+        using var images = new MagickImageCollection();
+        images.Ping(path);
+        if (images.Count == 0) return false;
+        var orientation = images[0].Orientation.ToString();
         return orientation.Equals("Undefined", StringComparison.OrdinalIgnoreCase) || orientation.Equals("TopLeft", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -152,8 +233,4 @@ public sealed class MagickToPdfConverter : IImageToPdfConverter
         return fullPath;
     }
 
-    private static long ResolveMaximumPixels() =>
-        long.TryParse(Environment.GetEnvironmentVariable("INACTIVEPDF_MAX_IMAGE_PIXELS"), out var value) && value > 0
-            ? value
-            : 50_000_000;
 }

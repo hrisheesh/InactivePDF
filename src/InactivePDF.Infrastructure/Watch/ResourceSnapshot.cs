@@ -26,7 +26,8 @@ public sealed record ResourceSnapshot(
     long ConversionWorkerPeakWorkingSetBytes,
     long ConversionWorkerPeakPhysicalFootprintBytes,
     int ConversionWorkerPeakThreadCount,
-    long ConversionWorkerCpuMilliseconds)
+    long ConversionWorkerCpuMilliseconds,
+    long ConversionWorkerPeakProcessTreeMemoryBytes)
 {
     public static ResourceSnapshot Capture()
     {
@@ -55,6 +56,7 @@ public sealed record ResourceSnapshot(
                 libreOfficeProcesses.Sum(process => TryGet(() => (long)process.TotalProcessorTime.TotalMilliseconds)),
                 physicalFootprint.CurrentBytes,
                 physicalFootprint.PeakBytes,
+                0,
                 0,
                 0,
                 0,
@@ -90,6 +92,7 @@ public sealed record ResourceSnapshot(
             ConversionWorkerPeakWorkingSetBytes = worker.PeakWorkingSetBytes,
             ConversionWorkerPeakPhysicalFootprintBytes = worker.PeakPhysicalFootprintBytes,
             ConversionWorkerPeakThreadCount = worker.PeakThreadCount,
-            ConversionWorkerCpuMilliseconds = worker.CpuMilliseconds
+            ConversionWorkerCpuMilliseconds = worker.CpuMilliseconds,
+            ConversionWorkerPeakProcessTreeMemoryBytes = worker.PeakProcessTreeMemoryBytes
         };
 }

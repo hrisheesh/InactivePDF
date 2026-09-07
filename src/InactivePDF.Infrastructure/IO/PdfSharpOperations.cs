@@ -55,7 +55,8 @@ public sealed class PdfSharpOperations : IPdfOperations
 
             PdfProfileDocumentConfigurator.Apply(output, resolvedProfile);
             output.Save(temporaryOutputPath);
-            _ = Inspect(temporaryOutputPath);
+            if (resolvedProfile.StructuralValidation)
+                _ = Inspect(temporaryOutputPath);
             File.Move(temporaryOutputPath, normalizedOutputPath, overwrite: true);
         }
         finally

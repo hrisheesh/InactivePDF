@@ -128,6 +128,22 @@ public static class InputFormatValidator
             using var archive = ZipFile.OpenRead(path);
             if (archive.Entries.Count == 0)
                 throw new ConversionFormatException("invalid_package", $"The '{format.Extension}' package contains no entries.");
+
+            if (format.Extension is ".odt" or ".ods" or ".odp")
+            {
+                var mimetype = archive.GetEntry("mimetype")
+                    ?? throw new ConversionFormatException("invalid_package", $"The '{format.Extension}' package does not contain the required mimetype entry.");
+                using var reader = new StreamReader(mimetype.Open(), Encoding.ASCII, detectEncodingFromByteOrderMarks: false);
+                var declared = reader.ReadToEnd().Trim();
+                var expected = format.Extension switch
+                {
+                    ".odt" => "application/vnd.oasis.opendocument.text",
+                    ".ods" => "application/vnd.oasis.opendocument.spreadsheet",
+                    _ => "application/vnd.oasis.opendocument.presentation"
+                };
+                if (!string.Equals(declared, expected, StringComparison.Ordinal))
+                    throw new ConversionFormatException("package_type_mismatch", $"The '{format.Extension}' package declares mimetype '{declared}', expected '{expected}'.");
+            }
         }
         catch (ConversionFormatException)
         {
@@ -139,7 +155,7 @@ public static class InputFormatValidator
         }
     }
 
-    private static bool IsZipContainer(SupportedFormatDescriptor format) => format.Extension is ".docx" or ".xlsx" or ".pptx" or ".odt" or ".odp";
+    private static bool IsZipContainer(SupportedFormatDescriptor format) => format.Extension is ".docx" or ".xlsx" or ".pptx" or ".odt" or ".ods" or ".odp";
 
     private static bool RequiresBinarySignature(SupportedFormatDescriptor format) =>
         format.Category is ConversionFormatCategory.Pdf or ConversionFormatCategory.Image ||

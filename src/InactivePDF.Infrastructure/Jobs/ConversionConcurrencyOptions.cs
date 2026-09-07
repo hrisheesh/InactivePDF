@@ -26,6 +26,9 @@ public sealed class ConversionConcurrencyGate(ConversionConcurrencyOptions optio
     private readonly SemaphoreSlim _image = new(options.ImageConcurrency, options.ImageConcurrency);
     private readonly SemaphoreSlim _pdf = new(options.PdfConcurrency, options.PdfConcurrency);
     private readonly SemaphoreSlim _text = new(options.TextConcurrency, options.TextConcurrency);
+    private readonly ResourceAdmissionGate _resourceAdmission = new(
+        ParseBytes("INACTIVEPDF_WORKER_MAX_MEMORY_BYTES", 1_610_612_736),
+        ParsePositive("INACTIVEPDF_WORKER_COUNT", 1));
 
     public async ValueTask<ConversionConcurrencyLease> AcquireAsync(ConversionWorkItem item, CancellationToken cancellationToken = default)
     {
@@ -39,7 +42,17 @@ public sealed class ConversionConcurrencyGate(ConversionConcurrencyOptions optio
             _ => _text
         };
         await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-        return new ConversionConcurrencyLease(semaphore);
+        try
+        {
+            var reservation = ResolveReservation(item, kind);
+            var resource = reservation > 0 ? await _resourceAdmission.AcquireAsync(reservation, cancellationToken).ConfigureAwait(false) : null;
+            return new ConversionConcurrencyLease(semaphore, resource);
+        }
+        catch
+        {
+            semaphore.Release();
+            throw;
+        }
     }
 
     public void Dispose()
@@ -48,6 +61,7 @@ public sealed class ConversionConcurrencyGate(ConversionConcurrencyOptions optio
         _image.Dispose();
         _pdf.Dispose();
         _text.Dispose();
+        _resourceAdmission.Dispose();
     }
 
     private static ConversionWorkKind ResolveKind(ConversionWorkItem item)
@@ -66,6 +80,21 @@ public sealed class ConversionConcurrencyGate(ConversionConcurrencyOptions optio
         return ConversionWorkKind.Office;
     }
 
+    private static long ResolveReservation(ConversionWorkItem item, ConversionWorkKind kind)
+    {
+        if (kind == ConversionWorkKind.Office) return 1_207_959_552;
+        if (kind == ConversionWorkKind.Image) return 1_073_741_824;
+        if (item.Inputs.Any(input => input.Path is not null && File.Exists(input.Path) && new FileInfo(input.Path).Length >= 1L * 1024 * 1024))
+            return 67_108_864;
+        return 0;
+    }
+
+    private static int ParsePositive(string name, int fallback) =>
+        int.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value > 0 ? value : fallback;
+
+    private static long ParseBytes(string name, long fallback) =>
+        long.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value > 0 ? value : fallback;
+
     private enum ConversionWorkKind
     {
         Office,
@@ -75,13 +104,16 @@ public sealed class ConversionConcurrencyGate(ConversionConcurrencyOptions optio
     }
 }
 
-public sealed class ConversionConcurrencyLease(SemaphoreSlim semaphore) : IAsyncDisposable
+public sealed class ConversionConcurrencyLease(SemaphoreSlim semaphore, ResourceAdmissionLease? resourceLease) : IAsyncDisposable
 {
     private int _disposed;
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) == 0) semaphore.Release();
-        return ValueTask.CompletedTask;
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            if (resourceLease is not null) await resourceLease.DisposeAsync().ConfigureAwait(false);
+            semaphore.Release();
+        }
     }
 }

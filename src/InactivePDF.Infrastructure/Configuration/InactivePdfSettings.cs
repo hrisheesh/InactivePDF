@@ -97,6 +97,12 @@ public sealed class InactivePdfSettings
 
         ApplyValue("INACTIVEPDF_MAX_OUTPUT_BYTES", settings.Resources.MaximumOutputBytes);
         ApplyValue("INACTIVEPDF_MAX_IMAGE_PIXELS", settings.Resources.MaximumImagePixels);
+        ApplyValue("INACTIVEPDF_MAX_IMAGE_WIDTH", settings.Resources.MaximumImageWidth);
+        ApplyValue("INACTIVEPDF_MAX_IMAGE_HEIGHT", settings.Resources.MaximumImageHeight);
+        ApplyValue("INACTIVEPDF_MAX_IMAGE_FRAMES", settings.Resources.MaximumImageFrames);
+        ApplyValue("INACTIVEPDF_IMAGE_MEMORY_BYTES", settings.Resources.ImageMemoryBytes);
+        ApplyValue("INACTIVEPDF_IMAGE_DISK_BYTES", settings.Resources.ImageDiskBytes);
+        ApplyValue("INACTIVEPDF_IMAGE_THREAD_COUNT", settings.Resources.ImageThreadCount);
         ApplyValue("INACTIVEPDF_MIN_FREE_DISK_BYTES", settings.Resources.MinimumFreeDiskBytes);
         ApplyValue("INACTIVEPDF_CONVERSION_TIMEOUT_SECONDS", settings.Resources.ConversionTimeoutSeconds);
         ApplyValue("INACTIVEPDF_COPY_BUFFER_BYTES", settings.Resources.CopyBufferBytes);
@@ -118,11 +124,29 @@ public sealed class InactivePdfSettings
         ApplyValue("INACTIVEPDF_WATCH_CONCURRENCY", settings.WatchFolder.MaximumConcurrentConversions);
         ApplyValue("INACTIVEPDF_WATCH_HEAVY_CONCURRENCY", settings.WatchFolder.MaximumHeavyConversions);
         ApplyValue("INACTIVEPDF_WATCH_MARKUP_CONCURRENCY", settings.WatchFolder.MaximumMarkupConversions);
+        ApplyValue("INACTIVEPDF_WATCH_RESOURCE_BUDGET_BYTES", settings.WatchFolder.ResourceBudgetBytes);
+        ApplyValue("INACTIVEPDF_WATCH_OFFICE_RESERVATION_BYTES", settings.WatchFolder.OfficeReservationBytes);
+        ApplyValue("INACTIVEPDF_WATCH_IMAGE_RESERVATION_BYTES", settings.WatchFolder.ImageReservationBytes);
+        ApplyValue("INACTIVEPDF_WATCH_MARKUP_RESERVATION_BYTES", settings.WatchFolder.MarkupReservationBytes);
+        ApplyValue("INACTIVEPDF_WATCH_LARGE_FILE_RESERVATION_BYTES", settings.WatchFolder.LargeFileReservationBytes);
         ApplyValue("INACTIVEPDF_WATCH_RETRIES", settings.WatchFolder.MaximumRetries);
         ApplyValue("INACTIVEPDF_WATCH_SCAN_INTERVAL_SECONDS", settings.WatchFolder.ScanIntervalSeconds);
         ApplyValue("INACTIVEPDF_WATCH_FILE_STABILITY_SECONDS", settings.WatchFolder.FileStabilityDelaySeconds);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_ENABLED", settings.WatchFolder.Retention.Enabled);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_SWEEP_INTERVAL_SECONDS", settings.WatchFolder.Retention.SweepIntervalSeconds);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_MAX_AGE_DAYS", settings.WatchFolder.Retention.MaximumAgeDays);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_MAX_OUTPUT_BYTES", settings.WatchFolder.Retention.MaximumOutputBytes);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_MAX_ORIGINALS_BYTES", settings.WatchFolder.Retention.MaximumOriginalsBytes);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_MAX_ERRORS_BYTES", settings.WatchFolder.Retention.MaximumErrorsBytes);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_MAX_LOGS_BYTES", settings.WatchFolder.Retention.MaximumLogsBytes);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_MIN_FILE_AGE_SECONDS", settings.WatchFolder.Retention.MinimumFileAgeSeconds);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_DELETE_OUTPUT_FILES", settings.WatchFolder.Retention.DeleteOutputFiles);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_DELETE_ORIGINAL_FILES", settings.WatchFolder.Retention.DeleteOriginalFiles);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_DELETE_ERROR_FILES", settings.WatchFolder.Retention.DeleteErrorFiles);
+        ApplyValue("INACTIVEPDF_WATCH_RETENTION_DELETE_LOG_FILES", settings.WatchFolder.Retention.DeleteLogFiles);
 
         ApplyValue("INACTIVEPDF_LIBREOFFICE_TIMEOUT_SECONDS", settings.Paths.LibreOfficeTimeoutSeconds);
+        ApplyValue("INACTIVEPDF_LIBREOFFICE_IDLE_TIMEOUT_SECONDS", settings.Paths.LibreOfficeIdleTimeoutSeconds);
         ApplyValue("INACTIVEPDF_LIBREOFFICE_ADDITIONAL_ARGUMENTS", settings.Paths.LibreOfficeAdditionalArguments, allowEmpty: true);
         ApplyValue("INACTIVEPDF_DEFAULT_PROFILE", settings.Conversion.DefaultProfile);
         ApplyValue("INACTIVEPDF_DEFAULT_OPERATION", settings.Conversion.DefaultOperation);
@@ -166,6 +190,12 @@ public sealed class InactivePdfSettings
         Positive(settings.Api.MaximumFiles, "Api.MaximumFiles", invalid);
         Positive(settings.Resources.MaximumOutputBytes, "Resources.MaximumOutputBytes", invalid);
         Positive(settings.Resources.MaximumImagePixels, "Resources.MaximumImagePixels", invalid);
+        Positive(settings.Resources.MaximumImageWidth, "Resources.MaximumImageWidth", invalid);
+        Positive(settings.Resources.MaximumImageHeight, "Resources.MaximumImageHeight", invalid);
+        Positive(settings.Resources.MaximumImageFrames, "Resources.MaximumImageFrames", invalid);
+        Positive(settings.Resources.ImageMemoryBytes, "Resources.ImageMemoryBytes", invalid);
+        Positive(settings.Resources.ImageDiskBytes, "Resources.ImageDiskBytes", invalid);
+        if (settings.Resources.ImageThreadCount < 0) invalid.Add("Resources.ImageThreadCount must be non-negative");
         Positive(settings.Resources.MinimumFreeDiskBytes, "Resources.MinimumFreeDiskBytes", invalid);
         Positive(settings.Resources.ConversionTimeoutSeconds, "Resources.ConversionTimeoutSeconds", invalid);
         Positive(settings.Resources.CopyBufferBytes, "Resources.CopyBufferBytes", invalid);
@@ -184,10 +214,23 @@ public sealed class InactivePdfSettings
         Positive(settings.WatchFolder.MaximumConcurrentConversions, "WatchFolder.MaximumConcurrentConversions", invalid);
         Positive(settings.WatchFolder.MaximumHeavyConversions, "WatchFolder.MaximumHeavyConversions", invalid);
         Positive(settings.WatchFolder.MaximumMarkupConversions, "WatchFolder.MaximumMarkupConversions", invalid);
+        Positive(settings.WatchFolder.ResourceBudgetBytes, "WatchFolder.ResourceBudgetBytes", invalid);
+        Positive(settings.WatchFolder.OfficeReservationBytes, "WatchFolder.OfficeReservationBytes", invalid);
+        Positive(settings.WatchFolder.ImageReservationBytes, "WatchFolder.ImageReservationBytes", invalid);
+        Positive(settings.WatchFolder.MarkupReservationBytes, "WatchFolder.MarkupReservationBytes", invalid);
+        Positive(settings.WatchFolder.LargeFileReservationBytes, "WatchFolder.LargeFileReservationBytes", invalid);
         if (settings.WatchFolder.MaximumRetries < 0) invalid.Add("WatchFolder.MaximumRetries must be non-negative");
         Positive(settings.WatchFolder.ScanIntervalSeconds, "WatchFolder.ScanIntervalSeconds", invalid);
         Positive(settings.WatchFolder.FileStabilityDelaySeconds, "WatchFolder.FileStabilityDelaySeconds", invalid);
+        Positive(settings.WatchFolder.Retention.SweepIntervalSeconds, "WatchFolder.Retention.SweepIntervalSeconds", invalid);
+        NonNegative(settings.WatchFolder.Retention.MaximumAgeDays, "WatchFolder.Retention.MaximumAgeDays", invalid);
+        NonNegative(settings.WatchFolder.Retention.MaximumOutputBytes, "WatchFolder.Retention.MaximumOutputBytes", invalid);
+        NonNegative(settings.WatchFolder.Retention.MaximumOriginalsBytes, "WatchFolder.Retention.MaximumOriginalsBytes", invalid);
+        NonNegative(settings.WatchFolder.Retention.MaximumErrorsBytes, "WatchFolder.Retention.MaximumErrorsBytes", invalid);
+        NonNegative(settings.WatchFolder.Retention.MaximumLogsBytes, "WatchFolder.Retention.MaximumLogsBytes", invalid);
+        NonNegative(settings.WatchFolder.Retention.MinimumFileAgeSeconds, "WatchFolder.Retention.MinimumFileAgeSeconds", invalid);
         Positive(settings.Paths.LibreOfficeTimeoutSeconds, "Paths.LibreOfficeTimeoutSeconds", invalid);
+        Positive(settings.Paths.LibreOfficeIdleTimeoutSeconds, "Paths.LibreOfficeIdleTimeoutSeconds", invalid);
         if (string.IsNullOrWhiteSpace(settings.Conversion.DefaultProfile) || settings.Conversion.DefaultProfile.Length > 64)
             invalid.Add("Conversion.DefaultProfile must contain 1 to 64 characters");
         if (!Enum.TryParse(settings.Conversion.DefaultOperation, ignoreCase: true, out InactivePdfOperation _))
@@ -208,6 +251,16 @@ public sealed class InactivePdfSettings
     private static void Positive(int value, string name, List<string> errors)
     {
         if (value <= 0) errors.Add($"{name} must be positive");
+    }
+
+    private static void NonNegative(long value, string name, List<string> errors)
+    {
+        if (value < 0) errors.Add($"{name} must be non-negative");
+    }
+
+    private static void NonNegative(int value, string name, List<string> errors)
+    {
+        if (value < 0) errors.Add($"{name} must be non-negative");
     }
 
     private static void ValidateProfile(string name, PdfProfileSettings? profile, List<string> errors)
@@ -252,6 +305,7 @@ public sealed class PathsSettings
     public string? PdfToTextPath { get; set; } = "pdftotext";
     public string? PdfToPpmPath { get; set; } = "pdftoppm";
     public int LibreOfficeTimeoutSeconds { get; set; } = 180;
+    public int LibreOfficeIdleTimeoutSeconds { get; set; } = 60;
     public string? LibreOfficeAdditionalArguments { get; set; }
 }
 
@@ -265,7 +319,13 @@ public sealed class ApiSettings
 public sealed class ResourceSettings
 {
     public long MaximumOutputBytes { get; set; } = 2L * 1024 * 1024 * 1024;
-    public long MaximumImagePixels { get; set; } = 50_000_000;
+    public long MaximumImagePixels { get; set; } = 100_000_000;
+    public long MaximumImageWidth { get; set; } = 20_000;
+    public long MaximumImageHeight { get; set; } = 20_000;
+    public int MaximumImageFrames { get; set; } = 256;
+    public long ImageMemoryBytes { get; set; } = 512L * 1024 * 1024;
+    public long ImageDiskBytes { get; set; } = 2L * 1024 * 1024 * 1024;
+    public int ImageThreadCount { get; set; }
     public long MinimumFreeDiskBytes { get; set; } = 10L * 1024 * 1024 * 1024;
     public int ConversionTimeoutSeconds { get; set; } = 180;
     public int CopyBufferBytes { get; set; } = 64 * 1024;
@@ -295,11 +355,33 @@ public sealed class WatchFolderSettings
 {
     public string? Root { get; set; }
     public int MaximumConcurrentConversions { get; set; } = 2;
-    public int MaximumHeavyConversions { get; set; } = 1;
+    public int MaximumHeavyConversions { get; set; } = 2;
     public int MaximumMarkupConversions { get; set; } = 1;
+    public long ResourceBudgetBytes { get; set; } = 2L * 1024 * 1024 * 1024;
+    public long OfficeReservationBytes { get; set; } = 1_207_959_552;
+    public long ImageReservationBytes { get; set; } = 1_073_741_824;
+    public long MarkupReservationBytes { get; set; } = 268_435_456;
+    public long LargeFileReservationBytes { get; set; } = 67_108_864;
     public int MaximumRetries { get; set; } = 1;
     public int ScanIntervalSeconds { get; set; } = 2;
     public int FileStabilityDelaySeconds { get; set; } = 2;
+    public RetentionSettings Retention { get; set; } = new();
+}
+
+public sealed class RetentionSettings
+{
+    public bool Enabled { get; set; }
+    public int SweepIntervalSeconds { get; set; } = 300;
+    public int MaximumAgeDays { get; set; }
+    public long MaximumOutputBytes { get; set; }
+    public long MaximumOriginalsBytes { get; set; }
+    public long MaximumErrorsBytes { get; set; }
+    public long MaximumLogsBytes { get; set; }
+    public int MinimumFileAgeSeconds { get; set; } = 300;
+    public bool DeleteOutputFiles { get; set; }
+    public bool DeleteOriginalFiles { get; set; }
+    public bool DeleteErrorFiles { get; set; }
+    public bool DeleteLogFiles { get; set; }
 }
 
 public sealed class ConversionSettings

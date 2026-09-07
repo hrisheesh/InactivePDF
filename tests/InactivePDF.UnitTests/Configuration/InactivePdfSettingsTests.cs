@@ -12,10 +12,16 @@ public sealed class InactivePdfSettingsTests
 
         Assert.Equal(512L * 1024 * 1024, settings.Api.MaximumRequestBytes);
         Assert.Equal(256L * 1024 * 1024, settings.Api.MaximumFileBytes);
-        Assert.Equal(50_000_000, settings.Resources.MaximumImagePixels);
+        Assert.Equal(100_000_000, settings.Resources.MaximumImagePixels);
+        Assert.Equal(20_000, settings.Resources.MaximumImageWidth);
+        Assert.Equal(256, settings.Resources.MaximumImageFrames);
         Assert.Equal(1_610_612_736, settings.Workers.MaximumMemoryBytes);
         Assert.Equal(2, settings.WatchFolder.ScanIntervalSeconds);
         Assert.Equal(2, settings.WatchFolder.FileStabilityDelaySeconds);
+        Assert.False(settings.WatchFolder.Retention.Enabled);
+        Assert.Equal(300, settings.WatchFolder.Retention.SweepIntervalSeconds);
+        Assert.Equal(0, settings.WatchFolder.Retention.MaximumOutputBytes);
+        Assert.Equal(300, settings.WatchFolder.Retention.MinimumFileAgeSeconds);
         Assert.Equal("archive", settings.Conversion.DefaultProfile);
         Assert.Equal("ConvertFile", settings.Conversion.DefaultOperation);
         Assert.Equal(17, settings.Conversion.Profiles.Archive.PdfVersion);

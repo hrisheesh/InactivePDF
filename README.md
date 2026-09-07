@@ -29,7 +29,7 @@ The service publishes the authoritative list at `GET /v1/capabilities`. The curr
 | PDF | `.pdf` |
 | Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.tif`, `.tiff` |
 | Microsoft Office | `.doc`, `.docx`, `.dot`, `.xls`, `.xlsx`, `.ppt`, `.pptx` |
-| OpenDocument | `.odt`, `.odp` |
+| OpenDocument | `.odt`, `.ods`, `.odp` |
 | Markup and text | `.html`, `.htm`, `.rtf`, `.txt`, `.csv` |
 
 Office, OpenDocument, HTML, RTF, and CSV conversion requires LibreOffice. Image conversion uses Magick.NET through an isolated worker. Plain text and PDF operations use the service's own code paths. Microsoft Office is not required.
@@ -284,10 +284,33 @@ Important configuration groups:
 - `Resources`: output size, image pixels, disk space, timeouts, and copy buffers.
 - `Workers`: queue capacity, attempts, leases, polling, retry delay, and worker memory.
 - `Concurrency`: independent office, image, PDF, and text gates.
-- `WatchFolder`: scan, stability, retry, and concurrency behavior.
+- `WatchFolder`: scan, stability, retry, concurrency, resource admission, and opt-in retention behavior.
 - `Conversion`: default operation, default profile, and profile policies.
 
 The conservative defaults are intended for a small single-server deployment. Increasing concurrency can increase native memory use significantly.
+
+### Watch-folder retention
+
+Retention is disabled by default so the service never deletes generated documents or originals without an explicit operator choice. To enable it, edit `WatchFolder.Retention` in `InactivePDF.settings.json`, restart the service, and set both the limits and the corresponding delete switches:
+
+```json
+"Retention": {
+  "Enabled": true,
+  "SweepIntervalSeconds": 300,
+  "MaximumAgeDays": 30,
+  "MaximumOutputBytes": 32212254720,
+  "MaximumOriginalsBytes": 32212254720,
+  "MaximumErrorsBytes": 5368709120,
+  "MaximumLogsBytes": 2147483648,
+  "MinimumFileAgeSeconds": 300,
+  "DeleteOutputFiles": true,
+  "DeleteOriginalFiles": true,
+  "DeleteErrorFiles": true,
+  "DeleteLogFiles": true
+}
+```
+
+Age and size limits are independent: `0` disables that limit. Cleanup removes the oldest eligible files first and never touches `Input` or `Processing`. The current day's active diagnostic log is protected. Keep `DeleteOutputFiles` and `DeleteOriginalFiles` disabled when those artifacts must be retained permanently.
 
 ## Operations and diagnostics
 

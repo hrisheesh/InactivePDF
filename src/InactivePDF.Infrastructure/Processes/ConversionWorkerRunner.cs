@@ -28,7 +28,7 @@ public static class ConversionWorkerRunner
             var requestPath = Required(args, "--request");
             var request = await ReadRequestAsync(requestPath).ConfigureAwait(false);
             var converter = new CompatibilityConversionService(
-                new MagickToPdfConverter(),
+                new MagickToPdfConverter(ResourcePolicy.FromEnvironment()),
                 new PdfTextGenerator(),
                 new LibreOfficeConverter(LibreOfficeOptions.Default),
                 new PdfSharpOperations(),

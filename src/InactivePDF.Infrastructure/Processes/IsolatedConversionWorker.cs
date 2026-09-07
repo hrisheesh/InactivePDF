@@ -54,7 +54,8 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
 
             var standardOutput = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
             var standardError = process.StandardError.ReadToEndAsync(CancellationToken.None);
-            tracker = new IsolatedWorkerTracker(process, options.MaximumWorkerWorkingSetBytes);
+            using var job = WindowsJobObject.Attach(process, options.MaximumWorkerWorkingSetBytes);
+            tracker = new IsolatedWorkerTracker(process, options.MaximumWorkerWorkingSetBytes, job);
             trackerCancellation = new CancellationTokenSource();
             trackerTask = tracker.RunAsync(trackerCancellation.Token);
 
@@ -225,12 +226,14 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
         return code.Length > 0 && code.All(character => char.IsLetterOrDigit(character) || character is '_' or '-');
     }
 
-    private sealed class IsolatedWorkerTracker(Process process, long maximumWorkingSetBytes)
+    private sealed class IsolatedWorkerTracker(Process process, long maximumWorkingSetBytes, WindowsJobObject? job)
     {
+        private readonly DateTime _workerStartTime = TryGetStartTime(process);
         private long _peakWorkingSetBytes;
         private long _peakPhysicalFootprintBytes;
         private int _peakThreadCount;
         private long _cpuMilliseconds;
+        private long _peakProcessTreeMemoryBytes;
         private int _resourceLimitExceeded;
 
         public bool ResourceLimitExceeded => Volatile.Read(ref _resourceLimitExceeded) == 1;
@@ -240,7 +243,8 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
             Interlocked.Read(ref _peakWorkingSetBytes),
             Interlocked.Read(ref _peakPhysicalFootprintBytes),
             Volatile.Read(ref _peakThreadCount),
-            Interlocked.Read(ref _cpuMilliseconds));
+            Interlocked.Read(ref _cpuMilliseconds),
+            Interlocked.Read(ref _peakProcessTreeMemoryBytes));
 
         public async Task RunAsync(CancellationToken cancellationToken)
         {
@@ -248,8 +252,14 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
             while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
             {
-                if (process.HasExited) break;
-                Observe();
+                try
+                {
+                    if (process.HasExited) break;
+                    Observe();
+                }
+                catch (InvalidOperationException) { break; }
+                catch (ArgumentException) { break; }
+                catch (System.ComponentModel.Win32Exception) { break; }
             }
         }
 
@@ -260,9 +270,11 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
                 var workingSet = process.WorkingSet64;
                 InterlockedMax(ref _peakWorkingSetBytes, workingSet);
                 InterlockedMax(ref _peakPhysicalFootprintBytes, ProcessMemoryMetrics.Capture(process.Id).CurrentBytes);
+                var processTreeMemory = job?.PeakJobMemoryBytes ?? CaptureKnownProcessTreeMemory(process, _workerStartTime);
+                InterlockedMax(ref _peakProcessTreeMemoryBytes, processTreeMemory);
                 InterlockedMax(ref _peakThreadCount, process.Threads.Count);
                 InterlockedMax(ref _cpuMilliseconds, (long)process.TotalProcessorTime.TotalMilliseconds);
-                if (maximumWorkingSetBytes > 0 && workingSet > maximumWorkingSetBytes && Interlocked.Exchange(ref _resourceLimitExceeded, 1) == 0)
+                if (maximumWorkingSetBytes > 0 && (workingSet > maximumWorkingSetBytes || processTreeMemory > maximumWorkingSetBytes) && Interlocked.Exchange(ref _resourceLimitExceeded, 1) == 0)
                 {
                     try { process.Kill(entireProcessTree: true); }
                     catch (InvalidOperationException) { }
@@ -271,6 +283,7 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
             }
             catch (InvalidOperationException) { }
             catch (ArgumentException) { }
+            catch (System.ComponentModel.Win32Exception) { }
         }
 
         private static void InterlockedMax(ref long target, long value)
@@ -290,6 +303,45 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
                 if (value <= current || Interlocked.CompareExchange(ref target, value, current) == current) return;
             }
         }
+
+        private static long CaptureKnownProcessTreeMemory(Process worker, DateTime workerStartTime)
+        {
+            var total = ProcessMemoryMetrics.Capture(worker.Id).CurrentBytes;
+            var observed = new HashSet<int> { worker.Id };
+            var sessionPid = int.TryParse(Environment.GetEnvironmentVariable("INACTIVEPDF_LIBREOFFICE_SESSION_PID"), out var configuredPid)
+                ? configuredPid
+                : 0;
+            foreach (var candidate in Process.GetProcessesByName("soffice").Concat(Process.GetProcessesByName("soffice.bin")))
+            {
+                try
+                {
+                    if (candidate.Id == worker.Id || (candidate.Id != sessionPid && candidate.StartTime < workerStartTime)) continue;
+                    if (observed.Add(candidate.Id))
+                        total = checked(total + ProcessMemoryMetrics.Capture(candidate.Id).CurrentBytes);
+                }
+                catch (System.ComponentModel.Win32Exception) { }
+                catch (InvalidOperationException) { }
+                catch (ArgumentException) { }
+                finally { candidate.Dispose(); }
+            }
+
+            if (sessionPid > 0 && observed.Add(sessionPid))
+            {
+                try { total = checked(total + ProcessMemoryMetrics.Capture(sessionPid).CurrentBytes); }
+                catch (System.ComponentModel.Win32Exception) { }
+                catch (InvalidOperationException) { }
+                catch (ArgumentException) { }
+            }
+            return total;
+        }
+
+        private static DateTime TryGetStartTime(Process process)
+        {
+            try { return process.StartTime; }
+            catch (InvalidOperationException) { return DateTime.UtcNow; }
+            catch (ArgumentException) { return DateTime.UtcNow; }
+            catch (System.ComponentModel.Win32Exception) { return DateTime.UtcNow; }
+        }
     }
 }
 
@@ -298,4 +350,5 @@ public sealed record IsolatedWorkerMetrics(
     long PeakWorkingSetBytes,
     long PeakPhysicalFootprintBytes,
     int PeakThreadCount,
-    long CpuMilliseconds);
+    long CpuMilliseconds,
+    long PeakProcessTreeMemoryBytes);

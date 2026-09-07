@@ -53,6 +53,8 @@ builder.Services.AddSingleton(new WorkspaceOptions { RootPath = jobRoot });
 builder.Services.AddSingleton<IJobWorkspaceFactory, FileSystemJobWorkspaceFactory>();
 builder.Services.AddSingleton<JobWorkspaceService>();
 builder.Services.AddSingleton<IsolatedConversionWorker>();
+builder.Services.AddSingleton<LibreOfficeSessionHost>();
+builder.Services.AddHostedService<LibreOfficeSessionLifecycle>();
 builder.Services.AddSingleton<IsolatedConversionService>();
 builder.Services.AddSingleton<IConversionWorkProcessor, IsolatedConversionWorkProcessor>();
 builder.Services.AddSingleton<ConversionMetrics>();
@@ -61,7 +63,9 @@ builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 
 builder.Services.AddSingleton<IConversionJobBuffer>(services => new ConversionJobBuffer(services.GetRequiredService<ConversionWorkerOptions>().QueueCapacity));
 builder.Services.AddHostedService<ConversionWorker>();
 builder.Services.AddSingleton(WatchFolderOptions.FromEnvironment());
+builder.Services.AddSingleton(WatchFolderRetentionOptions.FromEnvironment());
 builder.Services.AddHostedService<WatchFolderWorker>();
+builder.Services.AddHostedService<WatchFolderRetentionWorker>();
 builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = TimeSpan.FromSeconds(ParsePositiveEnvironment("INACTIVEPDF_SHUTDOWN_TIMEOUT_SECONDS", 30)));
 builder.Services.AddHealthChecks()
     .AddCheck<ConversionReadinessHealthCheck>("conversion-readiness", tags: ["ready"]);

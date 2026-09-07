@@ -55,6 +55,22 @@ public sealed class InputFormatValidatorTests
         finally { DeleteRoot(root); }
     }
 
+    [Fact]
+    public async Task OpenDocumentSpreadsheetPackageIsAccepted()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var package = Path.Combine(root, "spreadsheet.ods");
+            await File.WriteAllBytesAsync(package, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]);
+
+            var exception = Assert.Throws<ConversionFormatException>(() => InputFormatValidator.Validate(package, "spreadsheet.ods"));
+
+            Assert.Equal("invalid_package", exception.Code);
+        }
+        finally { DeleteRoot(root); }
+    }
+
     private static string CreateRoot()
     {
         var root = Path.Combine(Path.GetTempPath(), "InactivePDF-tests", Guid.NewGuid().ToString("N"));

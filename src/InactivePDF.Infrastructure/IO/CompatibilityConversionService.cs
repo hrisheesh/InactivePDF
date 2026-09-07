@@ -36,7 +36,8 @@ public sealed class CompatibilityConversionService(
         try
         {
             await ConvertRequestToPathAsync(request, temporaryOutput, profile, cancellationToken).ConfigureAwait(false);
-            _ = pdfOperations.Inspect(temporaryOutput);
+            if (profile.StructuralValidation)
+                _ = pdfOperations.Inspect(temporaryOutput);
             var outputLength = new FileInfo(temporaryOutput).Length;
             if (outputLength > resourcePolicy.MaximumOutputBytes)
                 throw new IOException($"The conversion output exceeds the maximum allowed size of {resourcePolicy.MaximumOutputBytes} bytes.");
@@ -119,8 +120,9 @@ public sealed class CompatibilityConversionService(
         }
         else
         {
-            await officeConverter.ConvertAsync(source, output, cancellationToken).ConfigureAwait(false);
-            pdfOperations.ApplyProfile(output, profile);
+            await officeConverter.ConvertAsync(source, output, profile, cancellationToken).ConfigureAwait(false);
+            if (!profile.PreserveSourceMetadata || profile.PdfVersion is < 15 or > 17)
+                pdfOperations.ApplyProfile(output, profile);
         }
     }
 

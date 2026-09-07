@@ -3,9 +3,10 @@ namespace InactivePDF.Domain.Models;
 public sealed record LibreOfficeOptions(
     string ExecutablePath,
     TimeSpan ConversionTimeout,
-    string? AdditionalArguments = null)
+    string? AdditionalArguments = null,
+    string? SharedProfilePath = null)
 {
-    public static LibreOfficeOptions Default { get; } = new(ResolveDefaultPath(), ResolveTimeout(), ResolveAdditionalArguments());
+    public static LibreOfficeOptions Default { get; } = new(ResolveDefaultPath(), ResolveTimeout(), ResolveAdditionalArguments(), ResolveSharedProfilePath());
 
     private static string ResolveDefaultPath() =>
         Environment.GetEnvironmentVariable("INACTIVEPDF_LIBREOFFICE_PATH") ??
@@ -18,4 +19,9 @@ public sealed record LibreOfficeOptions(
 
     private static string? ResolveAdditionalArguments() =>
         Environment.GetEnvironmentVariable("INACTIVEPDF_LIBREOFFICE_ADDITIONAL_ARGUMENTS");
+
+    private static string? ResolveSharedProfilePath() =>
+        Environment.GetEnvironmentVariable("INACTIVEPDF_LIBREOFFICE_SESSION_PROFILE") is { Length: > 0 } path
+            ? Path.GetFullPath(path)
+            : null;
 }

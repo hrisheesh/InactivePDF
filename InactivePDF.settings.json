@@ -13,6 +13,7 @@
     "PdfToTextPath": "pdftotext",
     "PdfToPpmPath": "pdftoppm",
     "LibreOfficeTimeoutSeconds": 180,
+    "LibreOfficeIdleTimeoutSeconds": 60,
     "LibreOfficeAdditionalArguments": null
   },
   "Api": {
@@ -22,7 +23,13 @@
   },
   "Resources": {
     "MaximumOutputBytes": 2147483648,
-    "MaximumImagePixels": 50000000,
+    "MaximumImagePixels": 100000000,
+    "MaximumImageWidth": 20000,
+    "MaximumImageHeight": 20000,
+    "MaximumImageFrames": 256,
+    "ImageMemoryBytes": 536870912,
+    "ImageDiskBytes": 2147483648,
+    "ImageThreadCount": 0,
     "MinimumFreeDiskBytes": 10737418240,
     "ConversionTimeoutSeconds": 180,
     "CopyBufferBytes": 65536
@@ -46,11 +53,30 @@
   "WatchFolder": {
     "Root": null,
     "MaximumConcurrentConversions": 2,
-    "MaximumHeavyConversions": 1,
+    "MaximumHeavyConversions": 2,
     "MaximumMarkupConversions": 1,
+    "ResourceBudgetBytes": 2147483648,
+    "OfficeReservationBytes": 1207959552,
+    "ImageReservationBytes": 1073741824,
+    "MarkupReservationBytes": 268435456,
+    "LargeFileReservationBytes": 67108864,
     "MaximumRetries": 1,
     "ScanIntervalSeconds": 2,
-    "FileStabilityDelaySeconds": 2
+    "FileStabilityDelaySeconds": 2,
+    "Retention": {
+      "Enabled": false,
+      "SweepIntervalSeconds": 300,
+      "MaximumAgeDays": 0,
+      "MaximumOutputBytes": 0,
+      "MaximumOriginalsBytes": 0,
+      "MaximumErrorsBytes": 0,
+      "MaximumLogsBytes": 0,
+      "MinimumFileAgeSeconds": 300,
+      "DeleteOutputFiles": false,
+      "DeleteOriginalFiles": false,
+      "DeleteErrorFiles": false,
+      "DeleteLogFiles": false
+    }
   },
   "Conversion": {
     "DefaultProfile": "archive",
@@ -118,6 +144,7 @@
       "PdfToTextPath": "pdftotext",
       "PdfToPpmPath": "pdftoppm",
       "LibreOfficeTimeoutSeconds": 180,
+      "LibreOfficeIdleTimeoutSeconds": 60,
       "LibreOfficeAdditionalArguments": null
     },
     "Api": {
@@ -127,7 +154,13 @@
     },
     "Resources": {
       "MaximumOutputBytes": 2147483648,
-      "MaximumImagePixels": 50000000,
+      "MaximumImagePixels": 100000000,
+      "MaximumImageWidth": 20000,
+      "MaximumImageHeight": 20000,
+      "MaximumImageFrames": 256,
+      "ImageMemoryBytes": 536870912,
+      "ImageDiskBytes": 2147483648,
+      "ImageThreadCount": 0,
       "MinimumFreeDiskBytes": 10737418240,
       "ConversionTimeoutSeconds": 180,
       "CopyBufferBytes": 65536
@@ -151,11 +184,30 @@
     "WatchFolder": {
       "Root": "Platform default listed above",
       "MaximumConcurrentConversions": 2,
-      "MaximumHeavyConversions": 1,
+      "MaximumHeavyConversions": 2,
       "MaximumMarkupConversions": 1,
+      "ResourceBudgetBytes": 2147483648,
+      "OfficeReservationBytes": 1207959552,
+      "ImageReservationBytes": 1073741824,
+      "MarkupReservationBytes": 268435456,
+      "LargeFileReservationBytes": 67108864,
       "MaximumRetries": 1,
       "ScanIntervalSeconds": 2,
-      "FileStabilityDelaySeconds": 2
+      "FileStabilityDelaySeconds": 2,
+      "Retention": {
+        "Enabled": false,
+        "SweepIntervalSeconds": 300,
+        "MaximumAgeDays": 0,
+        "MaximumOutputBytes": 0,
+        "MaximumOriginalsBytes": 0,
+        "MaximumErrorsBytes": 0,
+        "MaximumLogsBytes": 0,
+        "MinimumFileAgeSeconds": 300,
+        "DeleteOutputFiles": false,
+        "DeleteOriginalFiles": false,
+        "DeleteErrorFiles": false,
+        "DeleteLogFiles": false
+      }
     },
     "Conversion": {
       "DefaultProfile": "archive",

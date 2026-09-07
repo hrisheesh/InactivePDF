@@ -54,6 +54,7 @@ public static class SupportedFormatCatalog
         Format(".dot", ConversionFormatCategory.Office, ConversionFormatRoute.LibreOffice, ["application/msword", "application/vnd.ms-word"], true, false),
         Format(".odt", ConversionFormatCategory.Office, ConversionFormatRoute.LibreOffice, ["application/vnd.oasis.opendocument.text"], true, false),
         Format(".odp", ConversionFormatCategory.Office, ConversionFormatRoute.LibreOffice, ["application/vnd.oasis.opendocument.presentation"], true, false),
+        Format(".ods", ConversionFormatCategory.Office, ConversionFormatRoute.LibreOffice, ["application/vnd.oasis.opendocument.spreadsheet"], true, false),
         Format(".xls", ConversionFormatCategory.Office, ConversionFormatRoute.LibreOffice, ["application/vnd.ms-excel"], true, false),
         Format(".xlsx", ConversionFormatCategory.Office, ConversionFormatRoute.LibreOffice, ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"], true, false),
         Format(".ppt", ConversionFormatCategory.Office, ConversionFormatRoute.LibreOffice, ["application/vnd.ms-powerpoint"], true, false),

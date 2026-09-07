@@ -10,6 +10,7 @@ public sealed class SupportedFormatCatalogTests
     [InlineData(".PDF")]
     [InlineData(".csv")]
     [InlineData(".odp")]
+    [InlineData(".ODS")]
     public void SupportedExtensionsAreCaseInsensitive(string extension)
     {
         Assert.True(SupportedFormatCatalog.IsSupported(extension));
@@ -28,6 +29,7 @@ public sealed class SupportedFormatCatalogTests
         Assert.False(SupportedFormatCatalog.IsSupported(".text"));
         Assert.Contains(SupportedFormatCatalog.All, format => format.Extension == ".csv" && format.Route == ConversionFormatRoute.LibreOffice);
         Assert.Contains(SupportedFormatCatalog.All, format => format.Extension == ".odp" && format.Route == ConversionFormatRoute.LibreOffice);
+        Assert.Contains(SupportedFormatCatalog.All, format => format.Extension == ".ods" && format.Route == ConversionFormatRoute.LibreOffice);
     }
 
     [Fact]

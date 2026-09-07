@@ -93,7 +93,7 @@ public sealed class CompatibilityConversionServiceTests
 
     private sealed class TestOfficeConverter : IOfficeDocumentConverter
     {
-        public Task<OfficeConversionResult> ConvertAsync(string inputPath, string outputPath, CancellationToken cancellationToken = default) =>
+        public Task<OfficeConversionResult> ConvertAsync(string inputPath, string outputPath, PdfOutputProfile profile, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
 
