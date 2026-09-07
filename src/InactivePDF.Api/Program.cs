@@ -18,6 +18,7 @@ using InactivePDF.Api;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using System.Text.Json.Serialization;
 
 InactivePdfSettings.LoadAndApply();
 
@@ -28,6 +29,7 @@ if (ConversionWorkerEntryPoint.IsWorker(args))
 }
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<IConversionJobIdGenerator, GuidConversionJobIdGenerator>();
@@ -41,6 +43,7 @@ var dataRoot = ResolveDataRoot();
 var stateRoot = ResolveChildPath("INACTIVEPDF_STATE_PATH", Path.Combine(dataRoot, "state"));
 var jobRoot = ResolveChildPath("INACTIVEPDF_JOBS_PATH", Path.Combine(dataRoot, "jobs"));
 Environment.SetEnvironmentVariable("INACTIVEPDF_WATERMARK_PROFILES_PATH", Path.Combine(jobRoot, "watermark-profiles.json"));
+Environment.SetEnvironmentVariable("INACTIVEPDF_WATERMARK_ASSET_PATH", ResolveChildPath("INACTIVEPDF_WATERMARK_ASSET_PATH", Path.Combine(dataRoot, "watermark-assets")));
 var requestLimits = ApiRequestLimits.FromEnvironment();
 builder.Services.AddSingleton(requestLimits);
 builder.Services.AddSingleton(ResourcePolicy.FromEnvironment());
@@ -121,7 +124,7 @@ app.MapPut("/v1/watermark-profiles/{name}", (string name, WatermarkOptions profi
 {
     var errors = InactivePDF.Application.Watermarks.WatermarkProfileValidator.Validate(profile);
     if (errors.Count > 0) return Results.ValidationProblem(errors.Select((error, index) => new KeyValuePair<string, string[]>(index.ToString(System.Globalization.CultureInfo.InvariantCulture), [error])).ToDictionary());
-    if (string.IsNullOrWhiteSpace(name) || name.Length > 64) return Results.BadRequest(new { code = "invalid_profile_name" });
+    if (!WatermarkProfileStore.IsValidName(name)) return Results.BadRequest(new { code = "invalid_profile_name" });
     store.Save(name, profile);
     return Results.Ok(profile);
 });

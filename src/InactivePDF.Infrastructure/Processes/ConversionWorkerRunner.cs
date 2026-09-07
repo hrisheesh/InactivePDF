@@ -9,6 +9,8 @@ using System.Text.Json.Serialization;
 
 namespace InactivePDF.Infrastructure.Processes;
 
+using InactivePDF.Infrastructure.Resources;
+
 public static class ConversionWorkerRunner
 {
     public const string Switch = "--conversion-worker";
@@ -48,6 +50,7 @@ public static class ConversionWorkerRunner
             }
             if (watermark is not null)
             {
+                watermark = ResolveWatermarkAsset(watermark);
                 var temporary = request.OutputPath + ".watermark.tmp";
                 new PdfWatermarkService().Apply(request.OutputPath, temporary, watermark);
                 File.Move(temporary, request.OutputPath, overwrite: true);
@@ -65,6 +68,14 @@ public static class ConversionWorkerRunner
             Console.Error.WriteLine(exception);
             return 1;
         }
+    }
+
+    private static WatermarkOptions ResolveWatermarkAsset(WatermarkOptions options)
+    {
+        if (options.Kind != WatermarkKind.Image || string.IsNullOrWhiteSpace(options.ImagePath)) return options;
+        var assetRoot = Environment.GetEnvironmentVariable("INACTIVEPDF_WATERMARK_ASSET_PATH");
+        if (string.IsNullOrWhiteSpace(assetRoot)) throw new UnauthorizedAccessException("Watermark assets are not configured.");
+        return WatermarkAssetResolver.Resolve(options, assetRoot);
     }
 
     private static async Task<ConversionWorkerRequest> ReadRequestAsync(string path)

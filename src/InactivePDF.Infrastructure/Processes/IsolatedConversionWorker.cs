@@ -172,6 +172,8 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
         {
             Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../InactivePDF.ConversionWorker/bin/Debug/net10.0", fileName)),
             Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../InactivePDF.ConversionWorker/bin/Release/net10.0", fileName)),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../src/InactivePDF.ConversionWorker/bin/Debug/net10.0", fileName)),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../src/InactivePDF.ConversionWorker/bin/Release/net10.0", fileName)),
             Path.Combine(AppContext.BaseDirectory, fileName)
         };
 

@@ -39,6 +39,7 @@ public sealed partial class LibreOfficeSessionHost(ILogger<LibreOfficeSessionHos
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        if (Volatile.Read(ref _disposed) != 0) return;
         await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
         try { StopSession(); }
         finally { _lifecycle.Release(); }

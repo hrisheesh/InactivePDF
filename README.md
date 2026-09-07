@@ -18,7 +18,35 @@ It is designed for applications that need document conversion without embedding 
 - Provides a watch-folder workflow for file-based integrations.
 - Exposes operator and machine-readable conversion logs.
 
-The service is intentionally single-node in this release. It does not claim horizontal high availability, built-in authentication, or byte-identical output with another PDF engine.
+The service is intentionally single-node in this release. It does not claim horizontal high availability or byte-identical output with another PDF engine. Private deployments can enable bearer-token authentication.
+
+## Watermark API
+
+Watermark profiles are stored under the service data directory and managed with:
+
+```http
+GET    /v1/watermark-profiles
+GET    /v1/watermark-profiles/{name}
+PUT    /v1/watermark-profiles/{name}
+DELETE /v1/watermark-profiles/{name}
+```
+
+Example profile:
+
+```json
+{
+  "kind": "Text", "text": "CONFIDENTIAL", "fontSize": 36,
+  "color": "#808080", "opacity": 0.2, "rotation": -35,
+  "position": "Center", "layer": "Over", "pages": "all", "tile": false,
+  "header": "Example Ltd - {page}/{pages}", "footer": "Internal use only"
+}
+```
+
+Select a saved profile with the `watermarkProfile` field on `POST /v1/jobs` or the synchronous conversion routes. Synchronous JSON conversion also accepts a direct `watermark` object. Multipart clients send the same object as a JSON form field named `watermark`. Image profiles must use an asset filename from the configured `INACTIVEPDF_WATERMARK_ASSET_PATH`; absolute paths, traversal, symlinks, and reparse points are rejected.
+
+The .NET client exposes `WatermarkProfile` and `WatermarkJson` on `InactivePdfJobRequest`, plus direct-watermark methods for file, merge, and text conversion. The client does not store credentials; add `Authorization: Bearer <token>` to the supplied `HttpClient` before constructing `InactivePdfClient`.
+
+Set `INACTIVEPDF_API_TOKEN` for private-server authentication. `/health` and `/ready` remain available for probes; all other routes require the exact bearer token. Put TLS and rate limiting at the reverse proxy, keep the token out of source control, and use a dedicated service account.
 
 ## Supported formats
 

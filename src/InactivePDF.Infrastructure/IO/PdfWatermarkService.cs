@@ -3,6 +3,7 @@ using InactivePDF.Domain.Contracts;
 using InactivePDF.Domain.Models;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf.IO;
+using ImageMagick;
 
 namespace InactivePDF.Infrastructure.IO;
 
@@ -21,13 +22,18 @@ public sealed class PdfWatermarkService : IWatermarkService
             var brush = new XSolidBrush(ParseColor(options.Color, options.Opacity));
             if (options.Kind == WatermarkKind.Image && !string.IsNullOrWhiteSpace(options.ImagePath))
             {
-                using var image = XImage.FromFile(options.ImagePath);
-                var width = options.Width ?? image.PointWidth;
-                var height = options.Height ?? image.PointHeight;
-                if (options.Width.HasValue && !options.Height.HasValue) height = width * image.PointHeight / image.PointWidth;
-                if (options.Height.HasValue && !options.Width.HasValue) width = height * image.PointWidth / image.PointHeight;
-                var point = Position(options.Position, document.Pages[index].Width.Point, document.Pages[index].Height.Point, width, height, options.OffsetX, options.OffsetY);
-                graphics.DrawImage(image, point.X, point.Y, width, height);
+                var preparedPath = PrepareImage(options.ImagePath, options.Opacity);
+                try
+                {
+                    using var image = XImage.FromFile(preparedPath);
+                    var width = options.Width ?? image.PointWidth;
+                    var height = options.Height ?? image.PointHeight;
+                    if (options.Width.HasValue && !options.Height.HasValue) height = width * image.PointHeight / image.PointWidth;
+                    if (options.Height.HasValue && !options.Width.HasValue) width = height * image.PointWidth / image.PointHeight;
+                    var point = Position(options.Position, document.Pages[index].Width.Point, document.Pages[index].Height.Point, width, height, options.OffsetX, options.OffsetY);
+                    DrawImage(graphics, image, point, width, height, options.Rotation, options.Tile, document.Pages[index].Width.Point, document.Pages[index].Height.Point);
+                }
+                finally { try { File.Delete(preparedPath); } catch (IOException) { } }
             }
             else
             {
@@ -47,6 +53,33 @@ public sealed class PdfWatermarkService : IWatermarkService
         }
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         document.Save(outputPath);
+    }
+
+    private static string PrepareImage(string path, double opacity)
+    {
+        var temporary = Path.Combine(Path.GetTempPath(), $"inactivepdf-watermark-{Guid.NewGuid():N}.png");
+        using var image = new MagickImage(path);
+        image.AutoOrient();
+        image.Alpha(AlphaOption.Set);
+        image.Evaluate(Channels.Alpha, EvaluateOperator.Multiply, opacity);
+        image.Write(temporary, MagickFormat.Png);
+        return temporary;
+    }
+
+    private static void DrawImage(XGraphics graphics, XImage image, XPoint point, double width, double height, double rotation, bool tile, double pageWidth, double pageHeight)
+    {
+        void Draw(XPoint p)
+        {
+            graphics.Save();
+            graphics.TranslateTransform(p.X + width / 2, p.Y + height / 2);
+            graphics.RotateTransform(rotation);
+            graphics.DrawImage(image, -width / 2, -height / 2, width, height);
+            graphics.Restore();
+        }
+        Draw(point);
+        if (!tile) return;
+        for (var x = 0d; x < pageWidth; x += Math.Max(width + 40, 80))
+            for (var y = 0d; y < pageHeight; y += Math.Max(height + 40, 80)) Draw(new XPoint(x, y));
     }
 
     private static void DrawText(XGraphics graphics, string text, XFont font, XBrush brush, XPoint point, XSize size, double rotation)

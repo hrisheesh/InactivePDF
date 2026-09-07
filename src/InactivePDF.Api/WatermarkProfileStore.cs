@@ -21,12 +21,13 @@ public sealed class WatermarkProfileStore
     }
 
     public IReadOnlyDictionary<string, WatermarkOptions> List() { lock (_gate) return new Dictionary<string, WatermarkOptions>(_profiles, StringComparer.OrdinalIgnoreCase); }
+    public static bool IsValidName(string name) => !string.IsNullOrWhiteSpace(name) && name.Length <= 64 && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && name is not "." and not "..";
     public bool TryGet(string name, out WatermarkOptions options) { lock (_gate) return _profiles.TryGetValue(name, out options!); }
     public void Save(string name, WatermarkOptions options) { ValidateName(name); lock (_gate) { _profiles[name] = options; Persist(); } }
     public bool Delete(string name) { ValidateName(name); lock (_gate) { var removed = _profiles.Remove(name); if (removed) Persist(); return removed; } }
     private static void ValidateName(string name)
     {
-        if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name is "." or "..")
+        if (!IsValidName(name))
             throw new ArgumentException("Profile name must be a single safe filename component.", nameof(name));
     }
     private void Persist()

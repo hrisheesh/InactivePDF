@@ -39,12 +39,13 @@ internal static class JobEndpoints
             var profile = form["profile"].ToString();
             if (string.IsNullOrWhiteSpace(profile)) profile = Environment.GetEnvironmentVariable("INACTIVEPDF_DEFAULT_PROFILE") ?? "archive";
             var watermarkProfile = form["watermarkProfile"].ToString();
-            var requestModel = new ConversionRequest(correlationId, operation, documentInputs, new ConversionOptions(profile, WatermarkProfile: string.IsNullOrWhiteSpace(watermarkProfile) ? null : watermarkProfile));
+            var watermark = ParseWatermark(form["watermark"].ToString());
+            var requestModel = new ConversionRequest(correlationId, operation, documentInputs, new ConversionOptions(profile, WatermarkProfile: string.IsNullOrWhiteSpace(watermarkProfile) ? null : watermarkProfile, Watermark: watermark));
             ConversionJob job;
             try { job = coordinator.Accept(requestModel); }
             catch (ConversionRequestValidationException exception) { return Results.ValidationProblem(exception.Errors.ToDictionary(error => error.Code, error => new[] { error.Message })); }
 
-            var workspace = Path.Combine(workspaceOptions.RootPath, job.Id.ToString("N"));
+            var workspace = WorkspacePathSecurity.EnsureSafeChild(workspaceOptions.RootPath, Path.Combine(workspaceOptions.RootPath, job.Id.ToString("N")));
             Directory.CreateDirectory(workspace);
             var inputs = new List<StoredInput>(form.Files.Count);
             try
@@ -196,6 +197,9 @@ internal static class JobEndpoints
 
         app.MapGet("/v1/queue", (IConversionJobBuffer queue) => Results.Ok(new { queue.Count, queue.Capacity }));
     }
+
+    private static WatermarkOptions? ParseWatermark(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : JsonSerializer.Deserialize<WatermarkOptions>(value);
 
     private static void DeleteWorkspace(string path) { try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { } }
 

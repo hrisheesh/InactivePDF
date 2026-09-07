@@ -32,4 +32,13 @@ public sealed class WatermarkProfileValidatorTests
         var errors = WatermarkProfileValidator.Validate(new WatermarkOptions(Text: "DRAFT", Pages: "1,3-5"));
         Assert.Empty(errors);
     }
+
+    [Theory]
+    [InlineData("1-")]
+    [InlineData("1,,2")]
+    [InlineData("1-abc")]
+    public void RejectsMalformedPageRange(string pages)
+    {
+        Assert.NotEmpty(WatermarkProfileValidator.Validate(new WatermarkOptions(Text: "DRAFT", Pages: pages)));
+    }
 }

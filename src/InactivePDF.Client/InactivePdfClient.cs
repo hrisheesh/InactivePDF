@@ -61,6 +61,9 @@ public sealed class InactivePdfJobRequest
     public string? Text { get; set; }
     public string? CorrelationId { get; set; }
     public string Profile { get; set; } = "archive";
+    public string? WatermarkProfile { get; set; }
+    /// <summary>Optional serialized WatermarkOptions JSON for a direct watermark.</summary>
+    public string? WatermarkJson { get; set; }
 }
 
 public sealed class InactivePdfCapabilities
@@ -206,6 +209,9 @@ public sealed class InactivePdfClient : IDisposable
     public Task<byte[]> ConvertFileWithProfileAsync(Stream content, string fileName, string profile, string? contentType = null, CancellationToken cancellationToken = default) =>
         DownloadBytesAsync(() => CreateMultipartRequest("v1/convert-file", new[] { new InactivePdfFile(content, fileName, contentType) }, profile), cancellationToken);
 
+    public Task<byte[]> ConvertFileWithWatermarkAsync(Stream content, string fileName, string watermarkJson, string? contentType = null, CancellationToken cancellationToken = default) =>
+        DownloadBytesAsync(() => CreateMultipartRequest("v1/convert-file", new[] { new InactivePdfFile(content, fileName, contentType) }, watermarkJson: watermarkJson), cancellationToken);
+
     public Task ConvertFileWithProfileAsync(Stream content, string fileName, string profile, Stream destination, string? contentType = null, CancellationToken cancellationToken = default) =>
         DownloadToStreamAsync(() => CreateMultipartRequest("v1/convert-file", new[] { new InactivePdfFile(content, fileName, contentType) }, profile), destination, cancellationToken);
 
@@ -218,6 +224,9 @@ public sealed class InactivePdfClient : IDisposable
     public Task<byte[]> ConvertAndMergeWithProfileAsync(IReadOnlyList<InactivePdfFile> files, string profile, CancellationToken cancellationToken = default) =>
         DownloadBytesAsync(() => CreateMultipartRequest("v1/convert-and-merge", files, profile), cancellationToken);
 
+    public Task<byte[]> ConvertAndMergeWithWatermarkAsync(IReadOnlyList<InactivePdfFile> files, string watermarkJson, CancellationToken cancellationToken = default) =>
+        DownloadBytesAsync(() => CreateMultipartRequest("v1/convert-and-merge", files, watermarkJson: watermarkJson), cancellationToken);
+
     public Task ConvertAndMergeWithProfileAsync(IReadOnlyList<InactivePdfFile> files, string profile, Stream destination, CancellationToken cancellationToken = default) =>
         DownloadToStreamAsync(() => CreateMultipartRequest("v1/convert-and-merge", files, profile), destination, cancellationToken);
 
@@ -229,6 +238,9 @@ public sealed class InactivePdfClient : IDisposable
 
     public Task<byte[]> CreateTextPdfWithProfileAsync(string text, string profile, CancellationToken cancellationToken = default) =>
         DownloadBytesAsync(() => CreateJsonRequest("v1/create-text-pdf", new { text = text ?? string.Empty, profile }), cancellationToken);
+
+    public Task<byte[]> CreateTextPdfWithWatermarkAsync(string text, string watermarkJson, CancellationToken cancellationToken = default) =>
+        DownloadBytesAsync(() => CreateJsonRequest("v1/create-text-pdf", new { text = text ?? string.Empty, watermark = JsonSerializer.Deserialize<JsonElement>(watermarkJson) }), cancellationToken);
 
     public Task CreateTextPdfWithProfileAsync(string text, string profile, Stream destination, CancellationToken cancellationToken = default) =>
         DownloadToStreamAsync(() => CreateJsonRequest("v1/create-text-pdf", new { text = text ?? string.Empty, profile }), destination, cancellationToken);
@@ -351,7 +363,7 @@ public sealed class InactivePdfClient : IDisposable
         throw new HttpRequestException("InactivePDF request failed after all retry attempts.", lastException);
     }
 
-    private static HttpRequestMessage CreateMultipartRequest(string path, IEnumerable<InactivePdfFile> files, string? profile = null)
+    private static HttpRequestMessage CreateMultipartRequest(string path, IEnumerable<InactivePdfFile> files, string? profile = null, string? watermarkProfile = null, string? watermarkJson = null)
     {
         var multipart = new MultipartFormDataContent();
         foreach (var file in files ?? throw new ArgumentNullException(nameof(files)))
@@ -361,6 +373,8 @@ public sealed class InactivePdfClient : IDisposable
             multipart.Add(content, "file", file.FileName);
         }
         if (!string.IsNullOrWhiteSpace(profile)) multipart.Add(new StringContent(profile), "profile");
+        if (!string.IsNullOrWhiteSpace(watermarkProfile)) multipart.Add(new StringContent(watermarkProfile), "watermarkProfile");
+        if (!string.IsNullOrWhiteSpace(watermarkJson)) multipart.Add(new StringContent(watermarkJson, Encoding.UTF8), "watermark");
 
         return new HttpRequestMessage(HttpMethod.Post, path) { Content = multipart };
     }
@@ -379,6 +393,8 @@ public sealed class InactivePdfClient : IDisposable
         var multipart = new MultipartFormDataContent();
         multipart.Add(new StringContent(request.Operation.ToString()), "operation");
         multipart.Add(new StringContent(request.Profile ?? "archive"), "profile");
+        if (!string.IsNullOrWhiteSpace(request.WatermarkProfile)) multipart.Add(new StringContent(request.WatermarkProfile), "watermarkProfile");
+        if (!string.IsNullOrWhiteSpace(request.WatermarkJson)) multipart.Add(new StringContent(request.WatermarkJson, Encoding.UTF8), "watermark");
         if (!string.IsNullOrWhiteSpace(request.CorrelationId)) multipart.Add(new StringContent(request.CorrelationId), "correlationId");
         if (request.Text is not null) multipart.Add(new StringContent(request.Text, Encoding.UTF8), "text");
         foreach (var file in request.Files)
