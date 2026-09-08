@@ -22,6 +22,8 @@ The service is intentionally single-node in this release. It does not claim hori
 
 ## Watermark API
 
+The built-in [administration console](docs/administration-console.md) at `/` includes live service metrics, recent durable jobs, all configuration sections, and watermark editing. Settings are reviewed and validated before saving and require a service restart; watermark profiles are available to new conversions immediately. Enter the server bearer token through Connection & access for authenticated deployments.
+
 Watermark profiles are stored under the service data directory and managed with:
 
 ```http
@@ -49,7 +51,7 @@ Select a saved profile with the `watermarkProfile` field on `POST /v1/jobs` or t
 
 The .NET client exposes `WatermarkProfile` and `WatermarkJson` on `InactivePdfJobRequest`, plus direct-watermark methods for file, merge, and text conversion. The client does not store credentials; add `Authorization: Bearer <token>` to the supplied `HttpClient` before constructing `InactivePdfClient`.
 
-Set `INACTIVEPDF_API_TOKEN` for private-server authentication. `/health` and `/ready` remain available for probes; all other routes require the exact bearer token. Put TLS and rate limiting at the reverse proxy, keep the token out of source control, and use a dedicated service account.
+Set `INACTIVEPDF_API_TOKEN` for private-server authentication. `/health` and `/ready` remain available for probes; the public console shell can load before sign-in, while data and configuration routes require the exact bearer token. Put TLS and rate limiting at the reverse proxy, keep the token out of source control, and use a dedicated service account.
 
 ## Supported formats
 
@@ -311,6 +313,7 @@ Environment variables override values from the JSON file, which is useful for Wi
 Important configuration groups:
 
 - `Paths`: data, state, job, watch-folder, LibreOffice, and optional fidelity-tool paths.
+- `Performance`: shared swarm worker ceiling, estimated memory budget, admission backlog, and fairness threshold. The console's Performance & profiles section offers Conservative, Balanced, and Swarm presets plus named complete service configurations.
 - `Api`: request size, file size, and file-count limits.
 - `Resources`: output size, image pixels, disk space, timeouts, and copy buffers.
 - `Workers`: queue capacity, attempts, leases, polling, retry delay, and worker memory.
@@ -349,7 +352,7 @@ Age and size limits are independent: `0` disables that limit. Cleanup removes th
 
 Watermark profiles are managed with `GET`, `PUT`, and `DELETE /v1/watermark-profiles/{name}`. A profile is JSON using `WatermarkOptions` (text or image, opacity, rotation, placement, page ranges, tiling, headers, footers, and page numbering). Conversion requests may select a profile with `watermarkProfile`; JSON requests may also provide a direct `watermark` object. Watch-folder deployments can set `INACTIVEPDF_WATCH_WATERMARK_PROFILE`.
 
-Set `INACTIVEPDF_API_TOKEN` on private deployments. When set, every endpoint except `/health` and `/ready` requires `Authorization: Bearer <token>`. Keep the token in the service manager's protected secret store and use HTTPS at the reverse proxy. Watermark image assets must be kept in the configured asset directory and are never accepted from arbitrary filesystem paths.
+Set `INACTIVEPDF_API_TOKEN` on private deployments. When set, data and configuration endpoints require `Authorization: Bearer <token>`; health probes and the public console shell are available before sign-in. Keep the token in the service manager's protected secret store and use HTTPS at the reverse proxy. Watermark image assets must be kept in the configured asset directory and are never accepted from arbitrary filesystem paths.
 
 The built-in browser editor is available at `/` and provides profile selection, asset browsing/upload, editable watermark settings, and a live preview. The preview makes layer behavior explicit and reflects nine placement anchors, opacity, rotation, page selection, headers, footers, page numbers, and tiling. It is an operator tool, not a replacement for final PDF fidelity validation.
 

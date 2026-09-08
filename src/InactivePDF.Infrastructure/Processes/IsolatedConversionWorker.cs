@@ -12,7 +12,7 @@ namespace InactivePDF.Infrastructure.Processes;
 /// Owns the process boundary for every document conversion. The parent process only
 /// writes a small manifest and exchanges file paths with the child process.
 /// </summary>
-public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
+public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, ConversionTelemetryStore? telemetry = null, SwarmScheduler? scheduler = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General)
     {
@@ -24,6 +24,21 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
     public async Task<IsolatedWorkerMetrics> ConvertAsync(
         ConversionWorkerRequest request,
         CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        using var admission = scheduler is null ? null : await scheduler.AcquireAsync(request, cancellationToken).ConfigureAwait(false);
+        var observation = telemetry?.Begin(request);
+        if (observation is not null) { observation.QueueWaitMs = admission?.WaitMs ?? 0; observation.WorkerId = admission?.WorkerId; }
+        var started = Stopwatch.GetTimestamp();
+        Exception? failure = null;
+        try { return await ConvertCoreAsync(request, cancellationToken).ConfigureAwait(false); }
+        catch (Exception error) { failure = error; if (admission is not null) admission.Error = error; throw; }
+        finally { telemetry?.Complete(observation, Stopwatch.GetElapsedTime(started).TotalMilliseconds, request.OutputPath, failure); }
+    }
+
+    private async Task<IsolatedWorkerMetrics> ConvertCoreAsync(
+        ConversionWorkerRequest request,
+        CancellationToken cancellationToken)
     {
         ValidateRequest(request);
 
@@ -43,6 +58,13 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options)
             StartInfo = BuildStartInfo(requestPath),
             EnableRaisingEvents = true
         };
+
+        // Independent Office children must not attach to a shared LibreOffice profile/process.
+        if (scheduler is not null)
+        {
+            process.StartInfo.Environment.Remove("INACTIVEPDF_LIBREOFFICE_SESSION_PROFILE");
+            process.StartInfo.Environment.Remove("INACTIVEPDF_LIBREOFFICE_SESSION_PID");
+        }
 
         IsolatedWorkerTracker? tracker = null;
         CancellationTokenSource? trackerCancellation = null;

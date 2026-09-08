@@ -27,7 +27,7 @@ public sealed class ConversionConcurrencyGate(ConversionConcurrencyOptions optio
     private readonly SemaphoreSlim _pdf = new(options.PdfConcurrency, options.PdfConcurrency);
     private readonly SemaphoreSlim _text = new(options.TextConcurrency, options.TextConcurrency);
     private readonly ResourceAdmissionGate _resourceAdmission = new(
-        ParseBytes("INACTIVEPDF_WORKER_MAX_MEMORY_BYTES", 1_610_612_736),
+        ParseBytes("INACTIVEPDF_SWARM_MEMORY_BYTES", ParseBytes("INACTIVEPDF_WORKER_MAX_MEMORY_BYTES", 1_610_612_736)),
         ParsePositive("INACTIVEPDF_WORKER_COUNT", 1));
 
     public async ValueTask<ConversionConcurrencyLease> AcquireAsync(ConversionWorkItem item, CancellationToken cancellationToken = default)

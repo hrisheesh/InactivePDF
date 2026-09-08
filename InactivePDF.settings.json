@@ -1,4 +1,11 @@
 {
+  "Performance": {
+    "Profile": "Balanced",
+    "MaximumParallelWorkers": 2,
+    "MemoryBudgetBytes": 2147483648,
+    "MaximumPending": 4096,
+    "AgingSeconds": 30
+  },
   "Service": {
     "Urls": null,
     "ShutdownTimeoutSeconds": 30

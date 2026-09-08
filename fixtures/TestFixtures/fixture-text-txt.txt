@@ -1,0 +1,2 @@
+InactivePDF watch-folder text fixture.
+Unicode: café — नमस्ते — שלום.

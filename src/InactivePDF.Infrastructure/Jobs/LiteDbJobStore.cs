@@ -46,6 +46,23 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
         return Task.FromResult(ReadStatus(_jobs.FindById(jobId.ToString("N"))));
     }
 
+    public IReadOnlyList<JobStatus> ListRecent(int limit = 50)
+    {
+        return _jobs.Find(Query.All("updatedAt", Query.Descending), limit: Math.Clamp(limit, 1, 100))
+            .Select(ReadStatus).OfType<JobStatus>().ToArray();
+    }
+
+    public int PendingCount => _pending.Count();
+
+    public IReadOnlyList<JobStatus> SearchJobs(string query)
+    {
+        var text = query.Trim();
+        var idText = text.Replace("-", "", StringComparison.Ordinal);
+        var filter = Query.Or(Query.Contains("_id", idText.Length > 0 ? idText : text), Query.Contains("correlationId", text), Query.Contains("errorCode", text));
+        if (Enum.TryParse<ConversionJobState>(text, true, out var state)) filter = Query.Or(filter, Query.EQ("state", (int)state));
+        return _jobs.Find(filter, limit: 30).Select(ReadStatus).OfType<JobStatus>().ToArray();
+    }
+
     public Task<JobStatus?> FindByCorrelationIdAsync(string correlationId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(correlationId);
@@ -147,7 +164,7 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
         try
         {
             var candidates = _pending.FindAll()
-                .Where(IsNotDeadLetter)
+                .Where(document => IsClaimable(document, now))
                 .OrderBy(document => ReadDate(document, "createdAt"))
                 .Take(maximumItems * 4)
                 .ToList();

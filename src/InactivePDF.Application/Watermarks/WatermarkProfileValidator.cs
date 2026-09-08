@@ -40,7 +40,7 @@ public static class WatermarkProfileValidator
                 var parsedEnd = start;
                 if (pieces.Length == 2 && !int.TryParse(pieces[1], out parsedEnd)) { pages = result; return false; }
                 var end = pieces.Length == 2 ? parsedEnd : start;
-                if (end < start || end < 1 || end - start > 10000) { pages = result; return false; }
+                if (end < start || end < 1 || end == int.MaxValue || end - start > 10000) { pages = result; return false; }
                 for (var page = start; page <= end; page++) result.Add(page);
             }
             pages = result;

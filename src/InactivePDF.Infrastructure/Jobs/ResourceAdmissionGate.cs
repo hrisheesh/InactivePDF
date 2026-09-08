@@ -10,6 +10,7 @@ public sealed class ResourceAdmissionGate : IDisposable
     private const long UnitBytes = 64L * 1024 * 1024;
     private readonly SemaphoreSlim _tokens;
     private readonly SemaphoreSlim _concurrency;
+    private readonly SemaphoreSlim _reservationGate = new(1, 1);
     private readonly int _capacity;
 
     public ResourceAdmissionGate(long budgetBytes, int maximumConcurrentJobs)
@@ -29,7 +30,11 @@ public sealed class ResourceAdmissionGate : IDisposable
         var acquired = 0;
         try
         {
-            for (; acquired < units; acquired++) await _tokens.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // Reserve one whole allocation before the next waiter starts taking tokens.
+            // Partial allocations shared by competing large jobs can otherwise deadlock.
+            await _reservationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try { for (; acquired < units; acquired++) await _tokens.WaitAsync(cancellationToken).ConfigureAwait(false); }
+            finally { _reservationGate.Release(); }
             return new ResourceAdmissionLease(_tokens, _concurrency, units);
         }
         catch
@@ -44,6 +49,7 @@ public sealed class ResourceAdmissionGate : IDisposable
     {
         _tokens.Dispose();
         _concurrency.Dispose();
+        _reservationGate.Dispose();
     }
 }
 

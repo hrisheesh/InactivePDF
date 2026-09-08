@@ -18,7 +18,8 @@ public sealed class IsolatedConversionWorkProcessor(IsolatedConversionWorker wor
             item.Request.Operation,
             output,
             item.Inputs.Select(input => new ConversionWorkerInput(input.Path, input.FileName, input.ContentType)).ToArray(),
-            item.Request.Options.Profile, item.Request.Options.Watermark, item.Request.Options.WatermarkProfile);
+            item.Request.Options.Profile, item.Request.Options.Watermark, item.Request.Options.WatermarkProfile,
+            Source: "Queued", JobId: item.Job.Id.ToString());
 
         IAsyncDisposable? officeLease = null;
         try

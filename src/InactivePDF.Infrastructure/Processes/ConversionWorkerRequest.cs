@@ -14,6 +14,8 @@ public sealed record ConversionWorkerRequest(
     IReadOnlyList<ConversionWorkerInput> Inputs,
     string Profile = "archive",
     WatermarkOptions? Watermark = null,
-    string? WatermarkProfile = null);
+    string? WatermarkProfile = null,
+    string Source = "Synchronous",
+    string? JobId = null);
 
 public sealed record ConversionWorkerInput(string Path, string FileName, string ContentType = "application/octet-stream");

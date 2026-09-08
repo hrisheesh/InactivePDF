@@ -44,6 +44,8 @@ public sealed class WatermarkProfileValidatorTests
     [InlineData("1-")]
     [InlineData("1,,2")]
     [InlineData("1-abc")]
+    [InlineData("2147483647")]
+    [InlineData("2147483646-2147483647")]
     public void RejectsMalformedPageRange(string pages)
     {
         Assert.NotEmpty(WatermarkProfileValidator.Validate(new WatermarkOptions(Text: "DRAFT", Pages: pages)));

@@ -17,6 +17,7 @@ public sealed class InactivePdfSettings
     public ConcurrencySettings Concurrency { get; set; } = new();
     public WatchFolderSettings WatchFolder { get; set; } = new();
     public ConversionSettings Conversion { get; set; } = new();
+    public PerformanceSettings Performance { get; set; } = new();
 
     public static InactivePdfSettings Load(string? settingsPath = null)
     {
@@ -58,7 +59,7 @@ public sealed class InactivePdfSettings
         AllowTrailingCommas = true
     };
 
-    private static string? ResolveSettingsPath(string? explicitPath)
+    public static string? ResolveSettingsPath(string? explicitPath = null)
     {
         var configured = explicitPath ?? Environment.GetEnvironmentVariable("INACTIVEPDF_SETTINGS_PATH");
         if (!string.IsNullOrWhiteSpace(configured))
@@ -79,6 +80,11 @@ public sealed class InactivePdfSettings
 
     private static void Apply(InactivePdfSettings settings)
     {
+        ApplyValue("INACTIVEPDF_PERFORMANCE_PROFILE", settings.Performance.Profile);
+        ApplyValue("INACTIVEPDF_SWARM_WORKERS", settings.Performance.MaximumParallelWorkers);
+        ApplyValue("INACTIVEPDF_SWARM_MEMORY_BYTES", settings.Performance.MemoryBudgetBytes);
+        ApplyValue("INACTIVEPDF_SWARM_PENDING", settings.Performance.MaximumPending);
+        ApplyValue("INACTIVEPDF_SWARM_AGING_SECONDS", settings.Performance.AgingSeconds);
         ApplyValue("ASPNETCORE_URLS", settings.Service.Urls);
         ApplyValue("INACTIVEPDF_SHUTDOWN_TIMEOUT_SECONDS", settings.Service.ShutdownTimeoutSeconds);
 
@@ -181,9 +187,15 @@ public sealed class InactivePdfSettings
     private static void ApplyValue(string name, int value) => ApplyValue(name, value.ToString(CultureInfo.InvariantCulture));
     private static void ApplyValue(string name, bool value) => ApplyValue(name, value ? "true" : "false");
 
-    private static void Validate(InactivePdfSettings settings, string path)
+    public static void Validate(InactivePdfSettings settings, string path = "configuration")
     {
         var invalid = new List<string>();
+        if (settings.Performance is null) throw new InvalidDataException("Performance must be an object.");
+        if (string.IsNullOrWhiteSpace(settings.Performance.Profile) || settings.Performance.Profile.Length > 64) invalid.Add("Performance.Profile requires a name of 1–64 characters");
+        if (settings.Performance.MaximumParallelWorkers is < 1 or > 256) invalid.Add("Performance.MaximumParallelWorkers must be 1–256");
+        if (settings.Performance.MaximumPending is < 1 or > 100000) invalid.Add("Performance.MaximumPending must be 1–100000");
+        if (settings.Performance.AgingSeconds is < 1 or > 3600) invalid.Add("Performance.AgingSeconds must be 1–3600");
+        if (settings.Performance.MemoryBudgetBytes < 1207959552L) invalid.Add("Performance.MemoryBudgetBytes must admit at least one Office worker (1207959552 bytes)");
         Positive(settings.Service.ShutdownTimeoutSeconds, "Service.ShutdownTimeoutSeconds", invalid);
         Positive(settings.Api.MaximumRequestBytes, "Api.MaximumRequestBytes", invalid);
         Positive(settings.Api.MaximumFileBytes, "Api.MaximumFileBytes", invalid);
@@ -341,6 +353,15 @@ public sealed class WorkerSettings
     public int JobLeaseSeconds { get; set; } = 300;
     public int DispatcherPollMilliseconds { get; set; } = 250;
     public int RetryBaseDelayMilliseconds { get; set; } = 250;
+}
+
+public sealed class PerformanceSettings
+{
+    public string Profile { get; set; } = "Balanced";
+    public int MaximumParallelWorkers { get; set; } = 2;
+    public long MemoryBudgetBytes { get; set; } = 2L * 1024 * 1024 * 1024;
+    public int MaximumPending { get; set; } = 4096;
+    public int AgingSeconds { get; set; } = 30;
 }
 
 public sealed class ConcurrencySettings

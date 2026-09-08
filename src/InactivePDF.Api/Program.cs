@@ -20,7 +20,12 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using System.Text.Json.Serialization;
 
-InactivePdfSettings.LoadAndApply();
+var settingsFile = InactivePdfSettings.ResolveSettingsPath();
+var settingsOverrides = Environment.GetEnvironmentVariables().Keys.Cast<string>()
+    .Where(name => name.StartsWith("INACTIVEPDF_", StringComparison.Ordinal) || name == "ASPNETCORE_URLS")
+    .Where(name => !name.Contains("TOKEN", StringComparison.OrdinalIgnoreCase) && !name.Contains("SECRET", StringComparison.OrdinalIgnoreCase))
+    .OrderBy(name => name).ToArray();
+var startupSettings = InactivePdfSettings.LoadAndApply();
 
 if (ConversionWorkerEntryPoint.IsWorker(args))
 {
@@ -30,6 +35,7 @@ if (ConversionWorkerEntryPoint.IsWorker(args))
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+builder.Services.AddSingleton(new AdministrationSettingsStore(settingsFile, startupSettings, settingsOverrides));
 
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<IConversionJobIdGenerator, GuidConversionJobIdGenerator>();
@@ -61,6 +67,11 @@ builder.Services.AddSingleton(new WorkspaceOptions { RootPath = jobRoot });
 builder.Services.AddSingleton<IJobWorkspaceFactory, FileSystemJobWorkspaceFactory>();
 builder.Services.AddSingleton<JobWorkspaceService>();
 builder.Services.AddSingleton<IsolatedConversionWorker>();
+builder.Services.AddSingleton(_ => SwarmOptions.FromEnvironment());
+builder.Services.AddSingleton<SwarmScheduler>();
+builder.Services.AddSingleton<ServiceProfileStore>();
+builder.Services.AddSingleton(_ => new ConversionTelemetryStore(Path.Combine(stateRoot, "analytics.db")));
+builder.Services.AddSingleton<AdministrationLiveService>();
 builder.Services.AddSingleton<IWatermarkService, PdfWatermarkService>();
 builder.Services.AddSingleton<WatermarkProfileStore>();
 builder.Services.AddSingleton<LibreOfficeSessionHost>();
@@ -82,15 +93,21 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(Path.Combine(AppContext.BaseDirectory, "wwwroot"))
+});
 app.MapGet("/", () => Results.File(Path.Combine(AppContext.BaseDirectory, "wwwroot", "index.html"), "text/html"));
+app.MapGet("/console.css", () => Results.File(Path.Combine(AppContext.BaseDirectory, "wwwroot", "console.css"), "text/css"));
+app.MapGet("/console.js", () => Results.File(Path.Combine(AppContext.BaseDirectory, "wwwroot", "console.js"), "text/javascript"));
 
 var apiToken = Environment.GetEnvironmentVariable("INACTIVEPDF_API_TOKEN");
 if (!string.IsNullOrWhiteSpace(apiToken))
 {
     app.Use(async (context, next) =>
     {
-        if (context.Request.Path.StartsWithSegments("/health") || context.Request.Path.StartsWithSegments("/ready"))
+        if (context.Request.Path.StartsWithSegments("/health") || context.Request.Path.StartsWithSegments("/ready") ||
+            (HttpMethods.IsGet(context.Request.Method) && context.Request.Path.Value is "/" or "/console.css" or "/console.js"))
         {
             await next();
             return;
@@ -121,6 +138,7 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
 app.MapHealthChecks("/health");
 app.MapHealthChecks("/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready", StringComparer.OrdinalIgnoreCase) });
 JobEndpoints.Map(app);
+AdministrationEndpoints.Map(app);
 CompatibilityEndpoints.Map(app);
 app.MapGet("/v1/watermark-profiles", (WatermarkProfileStore store) => Results.Ok(store.List()));
 app.MapGet("/v1/watermark-profiles/{name}", (string name, WatermarkProfileStore store) => store.TryGet(name, out var profile) ? Results.Ok(profile) : Results.NotFound());

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using InactivePDF.Application;
 using InactivePDF.Application.Abstractions;
 using InactivePDF.Application.Models;
@@ -24,6 +25,8 @@ public sealed class ConversionWorker(
     ILogger<ConversionWorker> logger) : BackgroundService
 {
     private readonly string _leaseOwner = $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
+    private readonly ConcurrentDictionary<Guid, ConversionWorkItem> _bufferedClaims = new();
+    private readonly ConcurrentDictionary<Guid, byte> _expiredBufferedClaims = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -44,8 +47,16 @@ public sealed class ConversionWorker(
 
     private async Task DispatchAsync(CancellationToken stoppingToken)
     {
+        var renewAt = DateTimeOffset.UtcNow;
         while (!stoppingToken.IsCancellationRequested)
         {
+            if (DateTimeOffset.UtcNow >= renewAt)
+            {
+                foreach (var pair in _bufferedClaims)
+                    if (!await persistence.RenewLeaseAsync(pair.Key, _leaseOwner, options.EffectiveJobLeaseDuration, DateTimeOffset.UtcNow, stoppingToken).ConfigureAwait(false) && _bufferedClaims.ContainsKey(pair.Key))
+                        _expiredBufferedClaims[pair.Key] = 0;
+                renewAt = DateTimeOffset.UtcNow + options.EffectiveJobLeaseDuration / 3;
+            }
             var availableSlots = options.QueueCapacity - buffer.Count;
             if (availableSlots > 0)
             {
@@ -58,7 +69,9 @@ public sealed class ConversionWorker(
 
                 foreach (var item in claims)
                 {
+                    _bufferedClaims[item.Job.Id] = item;
                     if (buffer.TryEnqueue(item)) continue;
+                    _bufferedClaims.TryRemove(item.Job.Id, out _);
                     await SafeReleaseAsync(item, DateTimeOffset.UtcNow, "dispatcher_backpressure", "The in-memory dispatch buffer was full.").ConfigureAwait(false);
                 }
 
@@ -76,6 +89,9 @@ public sealed class ConversionWorker(
             ConversionWorkItem item;
             try { item = await buffer.DequeueAsync(stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            _bufferedClaims.TryRemove(item.Job.Id, out _);
+            if (_expiredBufferedClaims.TryRemove(item.Job.Id, out _)) continue;
+            if (!await persistence.RenewLeaseAsync(item.Job.Id, _leaseOwner, options.EffectiveJobLeaseDuration, DateTimeOffset.UtcNow, stoppingToken).ConfigureAwait(false)) continue;
             await ProcessAsync(item, stoppingToken).ConfigureAwait(false);
         }
     }
