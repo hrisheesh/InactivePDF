@@ -50,6 +50,9 @@ WatchFolders/Default/Logs/*
 
 # Local smoke-test runtime data.
 .inactivepdf-data/
+jobs/
+state/
+watermark-assets/
 .group1-watch-smoke/
 .group2-smoke/
 .group2-smoke2/
