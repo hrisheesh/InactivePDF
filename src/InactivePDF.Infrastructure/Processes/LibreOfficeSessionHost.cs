@@ -113,7 +113,7 @@ public sealed partial class LibreOfficeSessionHost(ILogger<LibreOfficeSessionHos
         }
         catch (Exception exception) when (exception is InvalidOperationException or IOException or SocketException)
         {
-            SessionLog.StartFailed(logger, exception);
+            SessionLog.StartFailed(logger, exception.GetType().Name);
             StopSession();
             return false;
         }
@@ -211,7 +211,7 @@ public sealed partial class LibreOfficeSessionHost(ILogger<LibreOfficeSessionHos
         [LoggerMessage(LogLevel.Warning, "LibreOffice warm session exited during startup with code {ExitCode}")]
         public static partial void StartupExited(ILogger logger, int exitCode);
 
-        [LoggerMessage(LogLevel.Warning, "LibreOffice warm session could not be started; using isolated cold starts")]
-        public static partial void StartFailed(ILogger logger, Exception exception);
+        [LoggerMessage(LogLevel.Warning, "LibreOffice warm session could not be started; using isolated cold starts; exceptionType={ExceptionType}")]
+        public static partial void StartFailed(ILogger logger, string exceptionType);
     }
 }

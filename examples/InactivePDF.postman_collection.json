@@ -1,0 +1,23 @@
+{
+  "info": {
+    "name": "InactivePDF API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Starter requests for the self-hosted InactivePDF API. Set baseUrl and token in the collection variables."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:5080" },
+    { "key": "token", "value": "" },
+    { "key": "jobId", "value": "" }
+  ],
+  "item": [
+    { "name": "Health", "request": { "method": "GET", "url": "{{baseUrl}}/health" } },
+    { "name": "Create integration key", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"postman-client\"\n}" }, "url": "{{baseUrl}}/v1/admin/api-keys" } },
+    { "name": "Capabilities", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/v1/capabilities" } },
+    { "name": "List profiles", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/v1/profiles" } },
+    { "name": "Create text PDF", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"text\": \"Hello from InactivePDF\",\n  \"profile\": \"archive\"\n}" }, "url": "{{baseUrl}}/v1/create-text-pdf" } },
+    { "name": "Submit async job", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Idempotency-Key", "value": "postman-job-001" }], "body": { "mode": "formdata", "formdata": [{ "key": "operation", "value": "ConvertFile", "type": "text" }, { "key": "profile", "value": "archive", "type": "text" }, { "key": "file", "type": "file", "src": "" }] }, "url": "{{baseUrl}}/v1/jobs" } },
+    { "name": "Get job status", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/v1/jobs/{{jobId}}" } },
+    { "name": "Download job output", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/v1/jobs/{{jobId}}/output" } },
+    { "name": "Admin usage", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/v1/admin/usage" } }
+  ]
+}

@@ -5,6 +5,26 @@ namespace InactivePDF.UnitTests.Configuration;
 public sealed class InactivePdfSettingsTests
 {
     [Fact]
+    public void WatchFolderReadsOutputAndWatermarkProfileSelectionsFromEnvironment()
+    {
+        var previousOutput = Environment.GetEnvironmentVariable("INACTIVEPDF_WATCH_PROFILE");
+        var previousWatermark = Environment.GetEnvironmentVariable("INACTIVEPDF_WATCH_WATERMARK_PROFILE");
+        Environment.SetEnvironmentVariable("INACTIVEPDF_WATCH_PROFILE", "compact");
+        Environment.SetEnvironmentVariable("INACTIVEPDF_WATCH_WATERMARK_PROFILE", "internal");
+        try
+        {
+            var options = InactivePDF.Infrastructure.Watch.WatchFolderOptions.FromEnvironment();
+            Assert.Equal("compact", options.Profile);
+            Assert.Equal("internal", options.WatermarkProfile);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("INACTIVEPDF_WATCH_PROFILE", previousOutput);
+            Environment.SetEnvironmentVariable("INACTIVEPDF_WATCH_WATERMARK_PROFILE", previousWatermark);
+        }
+    }
+
+    [Fact]
     public void RepositorySettingsFileLoadsTheCurrentDefaults()
     {
         var path = Path.Combine(AppContext.BaseDirectory, "InactivePDF.settings.json");
@@ -22,7 +42,10 @@ public sealed class InactivePdfSettingsTests
         Assert.Equal(300, settings.WatchFolder.Retention.SweepIntervalSeconds);
         Assert.Equal(0, settings.WatchFolder.Retention.MaximumOutputBytes);
         Assert.Equal(300, settings.WatchFolder.Retention.MinimumFileAgeSeconds);
+        Assert.Equal("archive", settings.WatchFolder.Profile);
+        Assert.Null(settings.WatchFolder.WatermarkProfile);
         Assert.Equal("archive", settings.Conversion.DefaultProfile);
+        Assert.Equal("Production", settings.Performance.ExecutionMode);
         Assert.Equal("ConvertFile", settings.Conversion.DefaultOperation);
         Assert.Equal(17, settings.Conversion.Profiles.Archive.PdfVersion);
         Assert.True(settings.Conversion.Profiles.Archive.PreserveJpegData);

@@ -27,7 +27,9 @@ public sealed record ResourceSnapshot(
     long ConversionWorkerPeakPhysicalFootprintBytes,
     int ConversionWorkerPeakThreadCount,
     long ConversionWorkerCpuMilliseconds,
-    long ConversionWorkerPeakProcessTreeMemoryBytes)
+    long ConversionWorkerPeakProcessTreeMemoryBytes,
+    long ConversionWorkerProcessTreeCpuMilliseconds = 0,
+    int ConversionWorkerPeakProcessCount = 0)
 {
     public static ResourceSnapshot Capture()
     {
@@ -93,6 +95,8 @@ public sealed record ResourceSnapshot(
             ConversionWorkerPeakPhysicalFootprintBytes = worker.PeakPhysicalFootprintBytes,
             ConversionWorkerPeakThreadCount = worker.PeakThreadCount,
             ConversionWorkerCpuMilliseconds = worker.CpuMilliseconds,
-            ConversionWorkerPeakProcessTreeMemoryBytes = worker.PeakProcessTreeMemoryBytes
+            ConversionWorkerPeakProcessTreeMemoryBytes = worker.PeakProcessTreeMemoryBytes,
+            ConversionWorkerProcessTreeCpuMilliseconds = worker.ProcessTreeCpuMilliseconds,
+            ConversionWorkerPeakProcessCount = worker.PeakProcessCount
         };
 }

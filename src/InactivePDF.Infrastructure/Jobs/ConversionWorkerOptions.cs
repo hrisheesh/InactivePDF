@@ -1,3 +1,5 @@
+using InactivePDF.Infrastructure.Processes;
+
 namespace InactivePDF.Infrastructure.Jobs;
 
 public sealed record ConversionWorkerOptions(
@@ -8,7 +10,8 @@ public sealed record ConversionWorkerOptions(
     long MaximumWorkerWorkingSetBytes = 1_610_612_736,
     TimeSpan JobLeaseDuration = default,
     TimeSpan DispatcherPollInterval = default,
-    TimeSpan RetryBaseDelay = default)
+    TimeSpan RetryBaseDelay = default,
+    ConversionExecutionMode ExecutionMode = ConversionExecutionMode.Production)
 {
     public static ConversionWorkerOptions FromEnvironment() => new(
         Math.Max(1, int.TryParse(Environment.GetEnvironmentVariable("INACTIVEPDF_WORKER_COUNT"), out var count) ? count : 1),
@@ -18,7 +21,8 @@ public sealed record ConversionWorkerOptions(
         ParseBytes("INACTIVEPDF_WORKER_MAX_MEMORY_BYTES", 1_610_612_736),
         TimeSpan.FromSeconds(Math.Max(30, int.TryParse(Environment.GetEnvironmentVariable("INACTIVEPDF_JOB_LEASE_SECONDS"), out var leaseSeconds) ? leaseSeconds : 300)),
         TimeSpan.FromMilliseconds(Math.Max(25, int.TryParse(Environment.GetEnvironmentVariable("INACTIVEPDF_DISPATCHER_POLL_MILLISECONDS"), out var pollMilliseconds) ? pollMilliseconds : 250)),
-        TimeSpan.FromMilliseconds(Math.Max(25, int.TryParse(Environment.GetEnvironmentVariable("INACTIVEPDF_RETRY_BASE_DELAY_MILLISECONDS"), out var retryMilliseconds) ? retryMilliseconds : 250)));
+        TimeSpan.FromMilliseconds(Math.Max(25, int.TryParse(Environment.GetEnvironmentVariable("INACTIVEPDF_RETRY_BASE_DELAY_MILLISECONDS"), out var retryMilliseconds) ? retryMilliseconds : 250)),
+        ConversionExecutionModeParser.FromEnvironment());
 
     public TimeSpan EffectiveWorkerTimeout => WorkerTimeout == default ? TimeSpan.FromMinutes(4) : WorkerTimeout;
     public TimeSpan EffectiveJobLeaseDuration => JobLeaseDuration == default ? TimeSpan.FromMinutes(5) : JobLeaseDuration;

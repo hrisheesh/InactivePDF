@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
+using InactivePDF.Application.Policies;
+using InactivePDF.Infrastructure.Processes;
 
 namespace InactivePDF.Infrastructure.Watch;
 
@@ -23,7 +25,7 @@ public sealed class WatchFolderLogger : IDisposable
         _userWriter = CreateWriter(Path.Combine(logDirectory, $"InactivePDF-{date}.log"));
     }
 
-    public async Task WriteAsync(string eventName, string path, bool success, int attempt, Exception? exception = null, long durationMs = 0, long inputBytes = 0, long outputBytes = 0, long workingSetBytes = 0, long cpuMs = 0, ResourceSnapshot? resource = null, long gateWaitMs = 0, DateTimeOffset? detectedAtUtc = null, DateTimeOffset? claimedAtUtc = null, DateTimeOffset? conversionStartedAtUtc = null, DateTimeOffset? completedAtUtc = null, CancellationToken cancellationToken = default)
+    public async Task WriteAsync(string eventName, string path, bool success, int attempt, Exception? exception = null, long durationMs = 0, long inputBytes = 0, long outputBytes = 0, long workingSetBytes = 0, long cpuMs = 0, ResourceSnapshot? resource = null, ConversionStageReport? stages = null, long gateWaitMs = 0, DateTimeOffset? detectedAtUtc = null, DateTimeOffset? claimedAtUtc = null, DateTimeOffset? conversionStartedAtUtc = null, DateTimeOffset? completedAtUtc = null, CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -33,8 +35,9 @@ public sealed class WatchFolderLogger : IDisposable
             var pickupWaitMs = DurationBetween(detectedAtUtc, claimedAtUtc);
             var queueWaitMs = DurationBetween(claimedAtUtc, conversionStartedAtUtc);
             var totalEndToEndMs = DurationBetween(detectedAtUtc, completedAtUtc ?? utc);
-            await _detailedWriter.WriteLineAsync(JsonSerializer.Serialize(new { schemaVersion = SchemaVersion, runId = _runId, utc, eventName, path, success, attempt, durationMs, wallDurationMs, gateWaitMs, pickupWaitMs, queueWaitMs, totalEndToEndMs, detectedAtUtc, claimedAtUtc, conversionStartedAtUtc, completedAtUtc, inputBytes, outputBytes, workingSetBytes, cpuMs, resource, errorType = exception?.GetType().FullName, error = exception?.ToString() })).ConfigureAwait(false);
-            await _userWriter.WriteLineAsync(FormatUserLine(utc, eventName, path, success, attempt, durationMs, wallDurationMs, gateWaitMs, pickupWaitMs, queueWaitMs, totalEndToEndMs, inputBytes, outputBytes, exception)).ConfigureAwait(false);
+            var failure = exception is null ? null : ConversionFailureClassifier.Classify(exception);
+            await _detailedWriter.WriteLineAsync(JsonSerializer.Serialize(new { schemaVersion = SchemaVersion, runId = _runId, utc, eventName, path, success, attempt, durationMs, wallDurationMs, gateWaitMs, pickupWaitMs, queueWaitMs, totalEndToEndMs, detectedAtUtc, claimedAtUtc, conversionStartedAtUtc, completedAtUtc, inputBytes, outputBytes, workingSetBytes, cpuMs, resource, stages, errorType = exception?.GetType().Name, errorCode = failure?.Code, errorMessage = failure?.Message, retryable = failure?.IsRetryable })).ConfigureAwait(false);
+            await _userWriter.WriteLineAsync(FormatUserLine(utc, eventName, path, success, attempt, durationMs, wallDurationMs, gateWaitMs, pickupWaitMs, queueWaitMs, totalEndToEndMs, inputBytes, outputBytes, failure?.Code)).ConfigureAwait(false);
             await FlushIfDueAsync().ConfigureAwait(false);
         }
         finally { _gate.Release(); }
@@ -92,7 +95,7 @@ public sealed class WatchFolderLogger : IDisposable
         _lastFlushUtc = now;
     }
 
-    private static string FormatUserLine(DateTimeOffset utc, string eventName, string path, bool success, int attempt, long durationMs, long wallDurationMs, long gateWaitMs, long pickupWaitMs, long queueWaitMs, long totalEndToEndMs, long inputBytes, long outputBytes, Exception? exception)
+    private static string FormatUserLine(DateTimeOffset utc, string eventName, string path, bool success, int attempt, long durationMs, long wallDurationMs, long gateWaitMs, long pickupWaitMs, long queueWaitMs, long totalEndToEndMs, long inputBytes, long outputBytes, string? errorCode)
     {
         var level = eventName switch
         {
@@ -101,7 +104,7 @@ public sealed class WatchFolderLogger : IDisposable
             _ when success => "INFO",
             _ => "WARN"
         };
-        var reason = exception is null ? string.Empty : $" reason={Normalize(exception.Message)}";
+        var reason = errorCode is null ? string.Empty : $" reason={Normalize(errorCode)}";
         return $"{utc:O} {level} {eventName} file={path} success={success} attempt={attempt} durationMs={durationMs} wallDurationMs={wallDurationMs} gateWaitMs={gateWaitMs} pickupWaitMs={pickupWaitMs} queueWaitMs={queueWaitMs} totalEndToEndMs={totalEndToEndMs} inputBytes={inputBytes} outputBytes={outputBytes}{reason}";
     }
 

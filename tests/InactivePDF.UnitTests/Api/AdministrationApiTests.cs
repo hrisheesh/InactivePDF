@@ -36,8 +36,34 @@ public sealed class AdministrationApiTests
                 using var response = await client.GetAsync(url);
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 Assert.Equal(mime, response.Content.Headers.ContentType!.MediaType);
-                Assert.Contains(marker, await response.Content.ReadAsStringAsync());
+                var asset = await response.Content.ReadAsStringAsync();
+                Assert.Contains(marker, asset);
+                if (url == "/console.js")
+                {
+                    Assert.Contains("response.results", asset);
+                    Assert.Contains("Live connection", asset);
+                    Assert.Contains("Service resources", asset);
+                    Assert.Contains("API key activity", asset);
+                    Assert.Contains("Audit events", asset);
+                    Assert.Contains("Stale data", asset);
+                    Assert.Contains("Search all settings, jobs, profiles, watch folders, logs, and docs", asset);
+                }
+                if (url == "/console.css")
+                {
+                    Assert.Contains(".format-panel,.intake-panel{grid-column:1/-1}", asset);
+                    Assert.Contains(".format-panel .savings-positive", asset);
+                }
             }
+            using (var reference = await client.GetAsync("/api-reference"))
+            {
+                Assert.Equal(HttpStatusCode.OK, reference.StatusCode);
+                Assert.Equal("text/html", reference.Content.Headers.ContentType!.MediaType);
+                Assert.Contains("API reference", await reference.Content.ReadAsStringAsync());
+            }
+            var openApi = await client.GetFromJsonAsync<JsonObject>("/openapi.json");
+            Assert.Equal("3.0.3", openApi!["openapi"]!.GetValue<string>());
+            Assert.NotNull(openApi["paths"]!["/v1/conversions"]);
+            Assert.NotNull(openApi["components"]!["securitySchemes"]!["administratorBearer"]);
             Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/v1/admin/settings")).StatusCode);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "wrong");
             Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/v1/admin/status")).StatusCode);
@@ -64,6 +90,10 @@ public sealed class AdministrationApiTests
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/v1/admin/status")).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/v1/admin/jobs")).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/v1/admin/search?q=example")).StatusCode);
+            var universalSearch = await client.GetFromJsonAsync<JsonObject>("/v1/admin/search?q=workers");
+            Assert.NotEmpty(universalSearch!["results"]!.AsArray());
+            Assert.Contains(universalSearch["results"]!.AsArray(), result => result!["kind"]!.GetValue<string>() == "setting");
+            Assert.Contains(universalSearch["results"]!.AsArray(), result => result!["kind"]!.GetValue<string>() == "documentation");
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/v1/admin/analytics")).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/v1/admin/logs")).StatusCode);
             using var conversion = await client.PostAsJsonAsync("/v1/create-text-pdf", new { text = "Live dashboard integration verification", profile = "archive" });
@@ -71,6 +101,8 @@ public sealed class AdministrationApiTests
             var analytics = await client.GetFromJsonAsync<JsonObject>("/v1/admin/analytics");
             Assert.True(analytics!["succeeded"]!.GetValue<int>() >= 1);
             Assert.True(analytics["executionTiming"]!["averageMs"]!.GetValue<double>() > 0);
+            Assert.NotNull(analytics["queueWaitTiming"]);
+            Assert.True(analytics["bytesSaved"] is not null);
             var executionSearch = await client.GetFromJsonAsync<JsonObject>("/v1/admin/search?q=Synchronous");
             Assert.NotEmpty(executionSearch!["executions"]!.AsArray());
             var logsPath = Path.Combine(root, "watch", "Logs");
@@ -97,6 +129,8 @@ public sealed class AdministrationApiTests
                     if (line.StartsWith("data: ", StringComparison.Ordinal)) snapshots.Add(JsonNode.Parse(line[6..])!.AsObject());
                 }
                 Assert.NotEqual(snapshots[0]["sampledAt"]!.ToString(), snapshots[1]["sampledAt"]!.ToString());
+                Assert.NotNull(snapshots[1]["resources"]);
+                Assert.True(snapshots[1]["resources"]!["apiWorkingSetBytes"]!.GetValue<long>() > 0);
                 Assert.True(snapshots[1]["status"]!["uptimeSeconds"]!.GetValue<double>() > snapshots[0]["status"]!["uptimeSeconds"]!.GetValue<double>());
                 streamCancellation.Cancel();
             }

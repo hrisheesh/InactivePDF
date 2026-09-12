@@ -16,6 +16,8 @@ public sealed record ConversionWorkerRequest(
     WatermarkOptions? Watermark = null,
     string? WatermarkProfile = null,
     string Source = "Synchronous",
-    string? JobId = null);
+    string? JobId = null,
+    string? TelemetryPath = null,
+    [property: JsonConverter(typeof(JsonStringEnumConverter))] ConversionExecutionMode ExecutionMode = ConversionExecutionMode.Production);
 
 public sealed record ConversionWorkerInput(string Path, string FileName, string ContentType = "application/octet-stream");

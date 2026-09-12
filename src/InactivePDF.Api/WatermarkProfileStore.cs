@@ -15,9 +15,13 @@ public sealed class WatermarkProfileStore
     {
         _path = Path.Combine(options.RootPath, "watermark-profiles.json");
         Directory.CreateDirectory(options.RootPath);
-        _profiles = File.Exists(_path)
-            ? JsonSerializer.Deserialize<Dictionary<string, WatermarkOptions>>(File.ReadAllText(_path)) ?? new(StringComparer.OrdinalIgnoreCase)
-            : new(StringComparer.OrdinalIgnoreCase);
+        EnsureSafeStorePath();
+        var loaded = File.Exists(_path)
+            ? JsonSerializer.Deserialize<Dictionary<string, WatermarkOptions>>(File.ReadAllText(_path))
+            : null;
+        _profiles = loaded is null
+            ? new(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, WatermarkOptions>(loaded, StringComparer.OrdinalIgnoreCase);
     }
 
     public IReadOnlyDictionary<string, WatermarkOptions> List() { lock (_gate) return new Dictionary<string, WatermarkOptions>(_profiles, StringComparer.OrdinalIgnoreCase); }
@@ -32,10 +36,18 @@ public sealed class WatermarkProfileStore
     }
     private void Persist()
     {
+        EnsureSafeStorePath();
         var temporary = _path + ".tmp-" + Guid.NewGuid().ToString("N");
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(_profiles, JsonOptions));
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.SequentialScan))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(JsonSerializer.Serialize(_profiles, JsonOptions));
+                writer.Flush();
+                stream.Flush(true);
+            }
+            EnsureSafeStorePath();
             if (File.Exists(_path))
             {
                 try { File.Replace(temporary, _path, null, ignoreMetadataErrors: true); }
@@ -47,5 +59,13 @@ public sealed class WatermarkProfileStore
         {
             try { if (File.Exists(temporary)) File.Delete(temporary); } catch (IOException) { }
         }
+    }
+
+    private void EnsureSafeStorePath()
+    {
+        var directory = Path.GetDirectoryName(_path)!;
+        WorkspacePathSecurity.EnsureSafeChain(directory, directory);
+        if (File.Exists(_path) && File.GetAttributes(_path).HasFlag(FileAttributes.ReparsePoint))
+            throw new UnauthorizedAccessException("The watermark profile store cannot be a symbolic link or reparse point.");
     }
 }

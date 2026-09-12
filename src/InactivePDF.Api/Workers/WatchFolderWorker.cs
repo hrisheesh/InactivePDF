@@ -9,6 +9,9 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using InactivePDF.Application.Models;
+using InactivePDF.Application.Watermarks;
+using InactivePDF.Application.Policies;
+using InactivePDF.Infrastructure.Resources;
 
 namespace InactivePDF.Api.Workers;
 
@@ -19,7 +22,8 @@ public sealed class WatchFolderWorker(
     ResourcePolicy resourcePolicy,
     LibreOfficeSessionHost officeSession,
     ILogger<WatchFolderWorker> logger,
-    LiteDbJobStore jobs) : BackgroundService
+    LiteDbJobStore jobs,
+    WatermarkProfileStore watermarkProfiles) : BackgroundService
 {
     private readonly StableFileDetector _stableFiles = new(options.EffectiveFileStabilityDelay);
     private readonly HashSet<string> _inflight = new(StringComparer.OrdinalIgnoreCase);
@@ -34,11 +38,13 @@ public sealed class WatchFolderWorker(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         WatchFolderLayout.Ensure(options);
+        _ = PdfOutputProfileCatalog.Resolve(options.Profile);
         using var fileLogger = new WatchFolderLogger(options.LogPath);
         await fileLogger.WriteServiceAsync("service-started", $"root={options.RootPath}", CancellationToken.None).ConfigureAwait(false);
         await RecoverProcessingFilesAsync(fileLogger).ConfigureAwait(false);
-        var monitor = new ServiceResourceMonitor(fileLogger);
-        var monitorTask = monitor.RunAsync(stoppingToken);
+        var monitorTask = options.ExecutionMode == ConversionExecutionMode.Development
+            ? new ServiceResourceMonitor(fileLogger).RunAsync(stoppingToken)
+            : Task.CompletedTask;
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -87,7 +93,7 @@ public sealed class WatchFolderWorker(
         {
             TryMove(path, options.ErrorsPath, originalName);
             await RecordJobAsync(path, originalName, detectedAtUtc, ConversionJobState.Failed, 0, error: exception.GetType().Name).ConfigureAwait(false);
-            WatchLog.Failed(logger, exception, originalName);
+            WatchLog.Failed(logger, ConversionFailureClassifier.Classify(exception).Code, originalName);
             await fileLogger.WriteAsync("error", originalName, false, 1, exception, detectedAtUtc: detectedAtUtc, claimedAtUtc: claimedAtUtc, completedAtUtc: DateTimeOffset.UtcNow, cancellationToken: CancellationToken.None).ConfigureAwait(false);
         }
         finally { lock (_inflightGate) _inflight.Remove(path); }
@@ -117,7 +123,7 @@ public sealed class WatchFolderWorker(
             lock (_processingTasksGate) tasks = _processingTasks.ToArray();
             if (tasks.Length == 0) return;
             try { await Task.WhenAll(tasks).ConfigureAwait(false); }
-            catch (Exception exception) { WatchLog.Failed(logger, exception, "service-shutdown"); }
+            catch (Exception exception) { WatchLog.Failed(logger, ConversionFailureClassifier.Classify(exception).Code, "service-shutdown"); }
         }
     }
 
@@ -134,6 +140,8 @@ public sealed class WatchFolderWorker(
         IAsyncDisposable? officeLease = null;
         var gateWaitMs = 0L;
         IsolatedWorkerMetrics? workerMetrics = null;
+        var diagnosticsEnabled = options.ExecutionMode == ConversionExecutionMode.Development;
+        var configuredWatermark = ResolveConfiguredWatermark();
         try
         {
             if (RequiresLibreOffice(fileName))
@@ -159,46 +167,53 @@ public sealed class WatchFolderWorker(
             {
                 var started = Stopwatch.GetTimestamp();
                 var conversionStartedAtUtc = DateTimeOffset.UtcNow;
-                var cpuBeforeMs = (long)Process.GetCurrentProcess().TotalProcessorTime.TotalMilliseconds;
+                var cpuBeforeMs = diagnosticsEnabled ? (long)Process.GetCurrentProcess().TotalProcessorTime.TotalMilliseconds : 0;
                 using var samplerCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                var sampler = new ResourceSampler(fileLogger);
-                await fileLogger.WriteResourceAsync(fileName, "start", ResourceSnapshot.Capture(), cancellationToken).ConfigureAwait(false);
-                var samplerTask = sampler.SampleAsync(fileName, samplerCancellation.Token);
+                var samplerTask = Task.CompletedTask;
+                if (diagnosticsEnabled)
+                {
+                    var sampler = new ResourceSampler(fileLogger);
+                    await fileLogger.WriteResourceAsync(fileName, "start", ResourceSnapshot.Capture(), cancellationToken).ConfigureAwait(false);
+                    samplerTask = sampler.SampleAsync(fileName, samplerCancellation.Token);
+                }
                 string? output = null;
                 try
                 {
                     output = CreateOutputPath(fileName);
-                    await RecordJobAsync(path, fileName, detectedAtUtc, ConversionJobState.Running, attempt).ConfigureAwait(false);
+                    await RecordJobAsync(path, fileName, detectedAtUtc, ConversionJobState.Processing, attempt, inputBytes: inputBytes, processingMilliseconds: (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds).ConfigureAwait(false);
                     workerMetrics = await converter.ConvertAsync(
                         new ConversionWorkerRequest(
                             ConversionOperation.ConvertFile,
                             output,
                             [new ConversionWorkerInput(path, fileName)],
-                            WatermarkProfile: options.WatermarkProfile, Source: "WatchFolder", JobId: WatchJobId(path).ToString()),
+                            Profile: options.Profile,
+                            Watermark: configuredWatermark,
+                            WatermarkProfile: options.WatermarkProfile, Source: "WatchFolder", JobId: WatchJobId(path).ToString(),
+                            ExecutionMode: options.ExecutionMode),
                         cancellationToken).ConfigureAwait(false);
                     if (!TryMove(path, options.OriginalsPath, fileName))
                         throw new IOException($"Conversion completed but the source could not be moved to the originals folder: {options.OriginalsPath}");
                     var outputBytes = new FileInfo(output).Length;
-                    await RecordJobAsync(path, fileName, detectedAtUtc, ConversionJobState.Succeeded, attempt, output).ConfigureAwait(false);
-                    var resource = ResourceSnapshot.Capture().WithConversionWorker(workerMetrics);
-                    await fileLogger.WriteAsync("converted", fileName, true, attempt, durationMs: (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, inputBytes: inputBytes, outputBytes: outputBytes, workingSetBytes: resource.WorkingSetBytes, cpuMs: Math.Max(0, resource.CpuMilliseconds - cpuBeforeMs), resource: resource, gateWaitMs: gateWaitMs, detectedAtUtc: detectedAtUtc, claimedAtUtc: claimedAtUtc, conversionStartedAtUtc: conversionStartedAtUtc, completedAtUtc: DateTimeOffset.UtcNow, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await RecordJobAsync(path, fileName, detectedAtUtc, ConversionJobState.Succeeded, attempt, output, inputBytes: inputBytes, processingMilliseconds: (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds).ConfigureAwait(false);
+                    var resource = diagnosticsEnabled ? ResourceSnapshot.Capture().WithConversionWorker(workerMetrics) : null;
+                    await fileLogger.WriteAsync("converted", fileName, true, attempt, durationMs: (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, inputBytes: inputBytes, outputBytes: outputBytes, workingSetBytes: resource?.WorkingSetBytes ?? 0, cpuMs: diagnosticsEnabled ? Math.Max(0, resource!.CpuMilliseconds - cpuBeforeMs) : 0, resource: resource, stages: diagnosticsEnabled ? workerMetrics.Stages : null, gateWaitMs: gateWaitMs, detectedAtUtc: detectedAtUtc, claimedAtUtc: claimedAtUtc, conversionStartedAtUtc: conversionStartedAtUtc, completedAtUtc: DateTimeOffset.UtcNow, cancellationToken: cancellationToken).ConfigureAwait(false);
                     return;
                 }
                 catch (Exception exception) when (attempt <= options.MaximumRetries && !cancellationToken.IsCancellationRequested && IsRetryable(exception))
                 {
-                    await RecordJobAsync(path, fileName, detectedAtUtc, ConversionJobState.Retrying, attempt, error: exception.GetType().Name).ConfigureAwait(false);
-                    var resource = ResourceSnapshot.Capture();
-                    await fileLogger.WriteAsync("retry", fileName, false, attempt, exception, durationMs: (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, inputBytes: inputBytes, workingSetBytes: resource.WorkingSetBytes, cpuMs: Math.Max(0, resource.CpuMilliseconds - cpuBeforeMs), resource: resource, gateWaitMs: gateWaitMs, detectedAtUtc: detectedAtUtc, claimedAtUtc: claimedAtUtc, conversionStartedAtUtc: conversionStartedAtUtc, completedAtUtc: DateTimeOffset.UtcNow, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await RecordJobAsync(path, fileName, detectedAtUtc, ConversionJobState.Retrying, attempt, error: exception.GetType().Name, inputBytes: inputBytes, processingMilliseconds: (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds).ConfigureAwait(false);
+                    var resource = diagnosticsEnabled ? ResourceSnapshot.Capture() : null;
+                    await fileLogger.WriteAsync("retry", fileName, false, attempt, exception, durationMs: (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, inputBytes: inputBytes, workingSetBytes: resource?.WorkingSetBytes ?? 0, cpuMs: diagnosticsEnabled ? Math.Max(0, resource!.CpuMilliseconds - cpuBeforeMs) : 0, resource: resource, gateWaitMs: gateWaitMs, detectedAtUtc: detectedAtUtc, claimedAtUtc: claimedAtUtc, conversionStartedAtUtc: conversionStartedAtUtc, completedAtUtc: DateTimeOffset.UtcNow, cancellationToken: cancellationToken).ConfigureAwait(false);
                     await Task.Delay(TimeSpan.FromMilliseconds(250 * (1 << Math.Min(attempt - 1, 6))), cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception exception)
                 {
                     TryMove(path, options.ErrorsPath, fileName);
-                    await RecordJobAsync(path, fileName, detectedAtUtc, ConversionJobState.Failed, attempt, error: exception.GetType().Name).ConfigureAwait(false);
-                    var resource = ResourceSnapshot.Capture();
-                    await fileLogger.WriteAsync("error", fileName, false, attempt, exception, durationMs: (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, inputBytes: inputBytes, workingSetBytes: resource.WorkingSetBytes, cpuMs: Math.Max(0, resource.CpuMilliseconds - cpuBeforeMs), resource: resource, gateWaitMs: gateWaitMs, detectedAtUtc: detectedAtUtc, claimedAtUtc: claimedAtUtc, conversionStartedAtUtc: conversionStartedAtUtc, completedAtUtc: DateTimeOffset.UtcNow, cancellationToken: CancellationToken.None).ConfigureAwait(false);
-                    WatchLog.Failed(logger, exception, fileName);
+                    await RecordJobAsync(path, fileName, detectedAtUtc, ConversionJobState.Failed, attempt, error: exception.GetType().Name, inputBytes: inputBytes, processingMilliseconds: (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds).ConfigureAwait(false);
+                    var resource = diagnosticsEnabled ? ResourceSnapshot.Capture() : null;
+                    await fileLogger.WriteAsync("error", fileName, false, attempt, exception, durationMs: (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, inputBytes: inputBytes, workingSetBytes: resource?.WorkingSetBytes ?? 0, cpuMs: diagnosticsEnabled ? Math.Max(0, resource!.CpuMilliseconds - cpuBeforeMs) : 0, resource: resource, gateWaitMs: gateWaitMs, detectedAtUtc: detectedAtUtc, claimedAtUtc: claimedAtUtc, conversionStartedAtUtc: conversionStartedAtUtc, completedAtUtc: DateTimeOffset.UtcNow, cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                    WatchLog.Failed(logger, ConversionFailureClassifier.Classify(exception).Code, fileName);
                     return;
                 }
                 finally
@@ -206,7 +221,8 @@ public sealed class WatchFolderWorker(
                     if (output is not null) lock (_inflightGate) _reservedOutputs.Remove(output);
                     samplerCancellation.Cancel();
                     try { await samplerTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
-                    await fileLogger.WriteResourceAsync(fileName, "end", ResourceSnapshot.Capture().WithConversionWorker(workerMetrics), CancellationToken.None).ConfigureAwait(false);
+                    if (diagnosticsEnabled)
+                        await fileLogger.WriteResourceAsync(fileName, "end", ResourceSnapshot.Capture().WithConversionWorker(workerMetrics), CancellationToken.None).ConfigureAwait(false);
                 }
             }
         }
@@ -229,6 +245,17 @@ public sealed class WatchFolderWorker(
     }
 
     private bool IsInFlight(string path) { lock (_inflightGate) return _inflight.Contains(path); }
+
+    private WatermarkOptions? ResolveConfiguredWatermark()
+    {
+        if (string.IsNullOrWhiteSpace(options.WatermarkProfile)) return null;
+        if (!watermarkProfiles.TryGet(options.WatermarkProfile, out var profile))
+            throw new ConversionFormatException("watermark_profile_not_found", $"The watch-folder watermark profile '{options.WatermarkProfile}' does not exist.");
+        var errors = WatermarkProfileValidator.Validate(profile);
+        if (errors.Count > 0)
+            throw new ConversionFormatException("invalid_watermark_profile", string.Join(" ", errors));
+        return profile;
+    }
 
     private static bool IsHidden(string path)
     {
@@ -268,7 +295,7 @@ public sealed class WatchFolderWorker(
     private IEnumerable<string> ScheduleInputs()
     {
         var lanes = Directory.EnumerateFiles(options.InputPath, "*", SearchOption.TopDirectoryOnly)
-            .Where(path => !IsHidden(path)).GroupBy(GetPriority).OrderBy(group => group.Key)
+            .Where(path => !IsHidden(path) && IsSafeWatchFile(path)).GroupBy(GetPriority).OrderBy(group => group.Key)
             .Select(group => new Queue<string>(group.OrderBy(File.GetLastWriteTimeUtc).ThenBy(path => path, StringComparer.OrdinalIgnoreCase))).ToArray();
         while (lanes.Any(lane => lane.Count > 0))
             foreach (var lane in lanes) if (lane.TryDequeue(out var path)) yield return path;
@@ -276,7 +303,7 @@ public sealed class WatchFolderWorker(
 
     private async Task RecoverProcessingFilesAsync(WatchFolderLogger fileLogger)
     {
-        foreach (var path in Directory.EnumerateFiles(options.ProcessingPath, "*", SearchOption.TopDirectoryOnly))
+        foreach (var path in Directory.EnumerateFiles(options.ProcessingPath, "*", SearchOption.TopDirectoryOnly).Where(IsSafeWatchFile))
         {
             var fileName = Path.GetFileName(path);
             if (fileName.Length == 0 || fileName[0] == '.') continue;
@@ -308,8 +335,16 @@ public sealed class WatchFolderWorker(
 
     private static Guid WatchJobId(string path) => Guid.ParseExact(Path.GetFileName(path)[..32], "N");
 
-    private Task RecordJobAsync(string path, string name, DateTimeOffset accepted, ConversionJobState state, int attempt, string? output = null, string? error = null) =>
-        jobs.UpsertAsync(new JobStatus(WatchJobId(path), "watch:" + name, ConversionOperation.ConvertFile, state, accepted, DateTimeOffset.UtcNow, attempt, output, error));
+    private Task RecordJobAsync(string path, string name, DateTimeOffset accepted, ConversionJobState state, int attempt, string? output = null, string? error = null, long inputBytes = 0, long processingMilliseconds = 0) {
+        var outputBytes = output is not null && File.Exists(output) ? new FileInfo(output).Length : 0;
+        var compression = inputBytes == 0 || outputBytes == 0 ? (double?)null : (inputBytes - outputBytes) * 100d / inputBytes;
+        var format = Path.GetExtension(name).TrimStart('.').ToLowerInvariant();
+        return jobs.UpsertAsync(new JobStatus(WatchJobId(path), "watch:" + name, ConversionOperation.ConvertFile, state, accepted, DateTimeOffset.UtcNow, attempt, output, error,
+            Source: "WatchFolder", Format: string.IsNullOrWhiteSpace(format) ? "unknown" : format, ProgressPercent: state == ConversionJobState.Succeeded ? 100 : 0,
+            QueueWaitMilliseconds: Math.Max(0, (long)(DateTimeOffset.UtcNow - accepted).TotalMilliseconds - processingMilliseconds), ProcessingMilliseconds: processingMilliseconds,
+            InputBytes: inputBytes, OutputBytes: outputBytes, CompressionPercent: compression, RetryCount: Math.Max(0, attempt - 1),
+            Profile: options.Profile, WatermarkProfile: options.WatermarkProfile));
+    }
     private static bool TryMove(string path, string destinationDirectory, string originalName)
     {
         try
@@ -341,10 +376,21 @@ public sealed class WatchFolderWorker(
     }
 
     private static bool IsRetryable(Exception exception) => exception is IOException;
+
+    private bool IsSafeWatchFile(string path)
+    {
+        try
+        {
+            WorkspacePathSecurity.EnsureSafeChain(path, options.RootPath);
+            return !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint);
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
 }
 
 internal static partial class WatchLog
 {
-    [LoggerMessage(LogLevel.Error, "Watch-folder conversion failed for {FileName}")]
-    public static partial void Failed(ILogger logger, Exception exception, string fileName);
+    [LoggerMessage(LogLevel.Error, "Watch-folder conversion failed for {FileName}; code={ErrorCode}")]
+    public static partial void Failed(ILogger logger, string errorCode, string fileName);
 }

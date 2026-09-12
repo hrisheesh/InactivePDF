@@ -29,12 +29,46 @@ public sealed class CompatibilityConversionServiceTests
             await service.ConvertRequestToFileAsync(new ConversionWorkerRequest(
                 ConversionOperation.ConvertFile,
                 output,
-                [new ConversionWorkerInput(input, "source.pdf")]));
+                [new ConversionWorkerInput(input, "source.pdf")],
+                ExecutionMode: ConversionExecutionMode.Development));
 
             Assert.True(File.Exists(output));
             Assert.Equal("%PDF-1.4\nsource", await File.ReadAllTextAsync(output));
             Assert.Equal(2, inspector.InspectCount);
             Assert.Empty(Directory.EnumerateFiles(root, "*.partial.pdf"));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ProductionPassThroughDoesNotInspectTheInputAndOutputTwice()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "InactivePDF-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var input = Path.Combine(root, "source.pdf");
+        var output = Path.Combine(root, "output.pdf");
+        await File.WriteAllTextAsync(input, "%PDF-1.4\nsource");
+
+        try
+        {
+            var inspector = new TestPdfOperations();
+            var service = new CompatibilityConversionService(
+                new TestImageConverter(),
+                new TestTextGenerator(),
+                new TestOfficeConverter(),
+                inspector,
+                new ResourcePolicy(1024, 1024, 0, TimeSpan.FromMinutes(1)));
+
+            await service.ConvertRequestToFileAsync(new ConversionWorkerRequest(
+                ConversionOperation.ConvertFile,
+                output,
+                [new ConversionWorkerInput(input, "source.pdf")],
+                ExecutionMode: ConversionExecutionMode.Production));
+
+            Assert.Equal(1, inspector.InspectCount);
         }
         finally
         {
@@ -73,6 +107,50 @@ public sealed class CompatibilityConversionServiceTests
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task DevelopmentRecordsDetailedStagesButProductionDoesNot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "InactivePDF-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var input = Path.Combine(root, "body.txt");
+        await File.WriteAllTextAsync(input, "text");
+
+        try
+        {
+            var developmentRecorder = new ConversionStageRecorder();
+            var developmentService = CreateTextService(developmentRecorder);
+            await developmentService.ConvertRequestToFileAsync(new ConversionWorkerRequest(
+                ConversionOperation.CreateTextPdf,
+                Path.Combine(root, "development.pdf"),
+                [new ConversionWorkerInput(input, "body.txt", "text/plain")],
+                ExecutionMode: ConversionExecutionMode.Development));
+
+            var productionRecorder = new ConversionStageRecorder();
+            var productionService = CreateTextService(productionRecorder);
+            await productionService.ConvertRequestToFileAsync(new ConversionWorkerRequest(
+                ConversionOperation.CreateTextPdf,
+                Path.Combine(root, "production.pdf"),
+                [new ConversionWorkerInput(input, "body.txt", "text/plain")],
+                ExecutionMode: ConversionExecutionMode.Production));
+
+            Assert.Contains("conversion", developmentRecorder.Snapshot().Keys);
+            Assert.Contains("requiredValidation", developmentRecorder.Snapshot().Keys);
+            Assert.Empty(productionRecorder.Snapshot());
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static CompatibilityConversionService CreateTextService(ConversionStageRecorder recorder) => new(
+        new TestImageConverter(),
+        new TestTextGenerator(),
+        new TestOfficeConverter(),
+        new TestPdfOperations(),
+        new ResourcePolicy(1024, 1024, 0, TimeSpan.FromMinutes(1)),
+        stageRecorder: recorder);
 
     private sealed class TestImageConverter : IImageToPdfConverter
     {

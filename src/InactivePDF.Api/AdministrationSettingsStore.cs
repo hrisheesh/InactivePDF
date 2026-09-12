@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using InactivePDF.Infrastructure.Configuration;
+using InactivePDF.Infrastructure.Resources;
 
 namespace InactivePDF.Api;
 
@@ -45,8 +46,8 @@ public sealed class AdministrationSettingsStore
             InactivePdfSettings.Validate(typed);
             if (typed.Api.MaximumFileBytes > typed.Api.MaximumRequestBytes)
                 throw new InvalidDataException("Api.MaximumFileBytes cannot exceed Api.MaximumRequestBytes.");
-            if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
-                throw new InvalidDataException("The settings file cannot be a symbolic link or reparse point.");
+            var directory = Path.GetDirectoryName(path)!;
+            WorkspacePathSecurity.EnsureSafeChain(path, directory);
             var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
@@ -56,7 +57,10 @@ public sealed class AdministrationSettingsStore
                     stream.Write(bytes);
                     stream.Flush(true);
                 }
-                File.Move(temporary, path, true);
+                WorkspacePathSecurity.EnsureSafeChain(path, directory);
+                try { File.Replace(temporary, path, destinationBackupFileName: null, ignoreMetadataErrors: true); }
+                catch (PlatformNotSupportedException) { File.Move(temporary, path, true); }
+                catch (IOException) { File.Move(temporary, path, true); }
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
             return Read();

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using InactivePDF.Application.Models;
 using InactivePDF.Domain.Models;
 
@@ -25,6 +26,9 @@ public static class ConversionRequestFingerprint
         Append(hash, request.Operation.ToString());
         Append(hash, request.Options.Profile);
         Append(hash, request.Options.PreserveExistingPdf.ToString());
+        Append(hash, request.Options.Timeout?.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty);
+        Append(hash, request.Options.WatermarkProfile ?? string.Empty);
+        Append(hash, request.Options.Watermark is null ? string.Empty : JsonSerializer.Serialize(request.Options.Watermark));
         for (var index = 0; index < inputs.Count; index++)
         {
             var metadata = request.Inputs[index];

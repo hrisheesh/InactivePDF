@@ -5,10 +5,14 @@ using InactivePDF.Application.Capabilities;
 using InactivePDF.Domain.Contracts;
 using InactivePDF.Domain.Models;
 using InactivePDF.Infrastructure.Validation;
+using InactivePDF.Infrastructure.Resources;
 
 namespace InactivePDF.Infrastructure.Processes;
 
-public sealed class LibreOfficeConverter(LibreOfficeOptions options) : IOfficeDocumentConverter
+public sealed class LibreOfficeConverter(
+    LibreOfficeOptions options,
+    ConversionStageRecorder? stageRecorder = null,
+    ConversionExecutionMode executionMode = ConversionExecutionMode.Production) : IOfficeDocumentConverter
 {
     public Task<OfficeConversionResult> ConvertAsync(string inputPath, string outputPath, CancellationToken cancellationToken = default) =>
         ConvertAsync(inputPath, outputPath, PdfOutputProfileCatalog.Resolve("archive"), cancellationToken);
@@ -24,14 +28,17 @@ public sealed class LibreOfficeConverter(LibreOfficeOptions options) : IOfficeDo
         var ownsProfile = string.IsNullOrWhiteSpace(options.SharedProfilePath);
         var profileDirectory = ownsProfile ? Path.Combine(workingDirectory, "profile") : options.SharedProfilePath!;
         Directory.CreateDirectory(workingDirectory);
+        WorkspacePathSecurity.EnsureSafeChain(workingDirectory, Path.GetDirectoryName(output)!);
         Directory.CreateDirectory(profileDirectory);
+        WorkspacePathSecurity.EnsureSafeChain(profileDirectory, profileDirectory);
         if (ownsProfile) LibreOfficeProfileProvisioner.Create(profileDirectory);
         var started = Stopwatch.StartNew();
         try
         {
             var startInfo = BuildStartInfo(input, workingDirectory, profileDirectory, profile);
             using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-            if (!process.Start()) throw new InvalidOperationException("LibreOffice failed to start.");
+            using (stageRecorder?.Measure("engineStartup"))
+                if (!process.Start()) throw new InvalidOperationException("LibreOffice failed to start.");
             var standardOutput = process.StandardOutput.ReadToEndAsync(cancellationToken);
             var standardError = process.StandardError.ReadToEndAsync(cancellationToken);
             try
@@ -48,19 +55,19 @@ public sealed class LibreOfficeConverter(LibreOfficeOptions options) : IOfficeDo
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 Terminate(process);
-                var timeoutOutput = await standardOutput.ConfigureAwait(false);
-                var timeoutError = await standardError.ConfigureAwait(false);
-                throw new TimeoutException($"LibreOffice conversion exceeded {options.ConversionTimeout}. ProcessId={process.Id}. StandardOutput={timeoutOutput.Trim()} StandardError={timeoutError.Trim()}");
+                await standardOutput.ConfigureAwait(false);
+                await standardError.ConfigureAwait(false);
+                throw new TimeoutException($"LibreOffice conversion exceeded the configured time limit of {options.ConversionTimeout.TotalSeconds:0} seconds.");
             }
 
-            var outputText = await standardOutput.ConfigureAwait(false);
-            var errorText = await standardError.ConfigureAwait(false);
+            _ = await standardOutput.ConfigureAwait(false);
+            _ = await standardError.ConfigureAwait(false);
             if (process.ExitCode != 0)
-                throw new InvalidOperationException($"LibreOffice exited with code {process.ExitCode}. StandardOutput={outputText.Trim()} StandardError={errorText.Trim()}");
+                throw new InvalidOperationException($"LibreOffice exited with code {process.ExitCode}.");
 
             var generated = Path.Combine(workingDirectory, Path.GetFileNameWithoutExtension(input) + ".pdf");
             if (!File.Exists(generated))
-                throw new InvalidOperationException($"LibreOffice completed without producing a PDF. StandardOutput={outputText.Trim()} StandardError={errorText.Trim()}");
+                throw new InvalidOperationException("LibreOffice completed without producing a PDF.");
             File.Move(generated, output, overwrite: true);
             return new OfficeConversionResult(output, new FileInfo(output).Length, started.Elapsed, process.ExitCode);
         }
@@ -114,15 +121,16 @@ public sealed class LibreOfficeConverter(LibreOfficeOptions options) : IOfficeDo
         return supported.OrderBy(value => Math.Abs(value - dpi)).First();
     }
 
-    private static string ValidateInput(string path)
+    private string ValidateInput(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var fullPath = Path.GetFullPath(path);
+        WorkspacePathSecurity.EnsureSafeChain(fullPath, Path.GetDirectoryName(fullPath)!);
         if (!File.Exists(fullPath)) throw new FileNotFoundException("The Office document does not exist.", path);
         var format = SupportedFormatCatalog.GetRequired(Path.GetExtension(fullPath));
         if (format.Route != ConversionFormatRoute.LibreOffice && format.Category != ConversionFormatCategory.PlainText)
             throw new NotSupportedException($"The LibreOffice route does not support extension: {Path.GetExtension(fullPath)}");
-        _ = InputFormatValidator.Validate(fullPath, Path.GetFileName(fullPath));
+        _ = InputFormatValidator.Validate(fullPath, Path.GetFileName(fullPath), executionMode: executionMode);
         return fullPath;
     }
 
@@ -132,6 +140,7 @@ public sealed class LibreOfficeConverter(LibreOfficeOptions options) : IOfficeDo
         var fullPath = Path.GetFullPath(path);
         if (!Path.GetExtension(fullPath).Equals(".pdf", StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("The output path must have a .pdf extension.", nameof(path));
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        WorkspacePathSecurity.EnsureSafeChain(fullPath, Path.GetDirectoryName(fullPath)!);
         return fullPath;
     }
 

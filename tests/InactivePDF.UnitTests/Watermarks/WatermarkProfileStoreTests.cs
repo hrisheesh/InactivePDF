@@ -17,6 +17,7 @@ public sealed class WatermarkProfileStoreTests
             var reloaded = new WatermarkProfileStore(options);
             Assert.True(reloaded.TryGet("draft", out var profile));
             Assert.Equal("DRAFT", profile.Text);
+            Assert.True(reloaded.TryGet("DRAFT", out _));
             Assert.Empty(Directory.EnumerateFiles(root, "watermark-profiles.json.tmp-*"));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }

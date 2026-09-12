@@ -8,6 +8,8 @@ namespace InactivePDF.Application.Abstractions;
 /// </summary>
 public interface IJobPersistence : IJobStatusStore
 {
+    int PendingCountForOwner(Guid ownerApiKeyId);
+
     Task<JobStatus?> CreateIfAbsentAsync(
         JobStatus status,
         ConversionWorkItem pendingWork,
@@ -18,6 +20,12 @@ public interface IJobPersistence : IJobStatusStore
         ConversionWorkItem pendingWork,
         string? requestFingerprint,
         CancellationToken cancellationToken = default);
+
+    Task<JobStatus?> CancelAsync(Guid jobId, DateTimeOffset now, CancellationToken cancellationToken = default);
+
+    Task<JobStatus?> RetryAsync(Guid jobId, DateTimeOffset now, CancellationToken cancellationToken = default);
+
+    Task<JobStatus?> DeleteAsync(Guid jobId, CancellationToken cancellationToken = default);
 
     IAsyncEnumerable<ConversionWorkItem> ReadPendingAsync(CancellationToken cancellationToken = default);
 

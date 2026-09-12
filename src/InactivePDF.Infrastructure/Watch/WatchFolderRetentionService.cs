@@ -1,3 +1,5 @@
+using InactivePDF.Infrastructure.Resources;
+
 namespace InactivePDF.Infrastructure.Watch;
 
 public sealed class WatchFolderRetentionService(WatchFolderOptions folders, WatchFolderRetentionOptions options)
@@ -30,6 +32,9 @@ public sealed class WatchFolderRetentionService(WatchFolderOptions folders, Watc
     private TargetSweepResult SweepTarget(Target target, DateTimeOffset now)
     {
         if (!Directory.Exists(target.Path)) return default;
+        try { WorkspacePathSecurity.EnsureSafeChain(target.Path, folders.RootPath); }
+        catch (IOException) { return default; }
+        catch (UnauthorizedAccessException) { return default; }
 
         var minimumFileTime = now.UtcDateTime - TimeSpan.FromSeconds(options.MinimumFileAgeSeconds);
         var protectedName = target.ProtectCurrentLog
@@ -82,7 +87,12 @@ public sealed class WatchFolderRetentionService(WatchFolderOptions folders, Watc
             if (protectedName is not null && Path.GetFileNameWithoutExtension(name).StartsWith(protectedName, StringComparison.OrdinalIgnoreCase)) continue;
 
             FileInfo file;
-            try { file = new FileInfo(pathItem); if (!file.Exists) continue; }
+            try
+            {
+                file = new FileInfo(pathItem);
+                if (!file.Exists || file.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+                WorkspacePathSecurity.EnsureSafeChain(file.FullName, path);
+            }
             catch (IOException) { continue; }
             catch (UnauthorizedAccessException) { continue; }
             yield return file;

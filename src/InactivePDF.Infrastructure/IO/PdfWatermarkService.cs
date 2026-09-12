@@ -2,6 +2,7 @@ using InactivePDF.Application.Watermarks;
 using InactivePDF.Domain.Contracts;
 using InactivePDF.Domain.Models;
 using PdfSharp.Drawing;
+using PdfSharp.Fonts;
 using PdfSharp.Pdf.IO;
 using ImageMagick;
 
@@ -13,6 +14,7 @@ public sealed class PdfWatermarkService : IWatermarkService
     {
         var errors = WatermarkProfileValidator.Validate(options);
         if (errors.Count > 0) throw new ArgumentException(string.Join(" ", errors), nameof(options));
+        GlobalFontSettings.FallbackFontResolver ??= new InactivePDF.Infrastructure.Rendering.SystemFontResolver();
         using var document = PdfReader.Open(inputPath, PdfDocumentOpenMode.Modify);
         for (var index = 0; index < document.PageCount; index++)
         {

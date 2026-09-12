@@ -3,10 +3,14 @@ namespace InactivePDF.Domain.Models;
 public enum ConversionJobState
 {
     Accepted,
-    Running,
+    Processing,
+    Running = Processing,
     Succeeded,
     Failed,
     Cancelled,
     Retrying,
-    DeadLettered
+    DeadLettered,
+    Queued,
+    WaitingForResources,
+    Interrupted
 }

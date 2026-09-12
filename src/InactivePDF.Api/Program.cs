@@ -13,6 +13,7 @@ using InactivePDF.Infrastructure.Rendering;
 using InactivePDF.Infrastructure.Jobs;
 using InactivePDF.Infrastructure.Watch;
 using InactivePDF.Application.Resources;
+using InactivePDF.Application.Policies;
 using InactivePDF.Api.Workers;
 using InactivePDF.Api;
 using Microsoft.AspNetCore.Http.Features;
@@ -21,6 +22,8 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using System.Text.Json.Serialization;
 
 var settingsFile = InactivePdfSettings.ResolveSettingsPath();
+if (settingsFile is not null)
+    WorkspacePathSecurity.EnsureSafeChain(settingsFile, Path.GetDirectoryName(settingsFile)!);
 var settingsOverrides = Environment.GetEnvironmentVariables().Keys.Cast<string>()
     .Where(name => name.StartsWith("INACTIVEPDF_", StringComparison.Ordinal) || name == "ASPNETCORE_URLS")
     .Where(name => !name.Contains("TOKEN", StringComparison.OrdinalIgnoreCase) && !name.Contains("SECRET", StringComparison.OrdinalIgnoreCase))
@@ -51,6 +54,10 @@ var jobRoot = ResolveChildPath("INACTIVEPDF_JOBS_PATH", Path.Combine(dataRoot, "
 Environment.SetEnvironmentVariable("INACTIVEPDF_WATERMARK_PROFILES_PATH", Path.Combine(jobRoot, "watermark-profiles.json"));
 var watermarkAssetRoot = ResolveChildPath("INACTIVEPDF_WATERMARK_ASSET_PATH", Path.Combine(dataRoot, "watermark-assets"));
 WorkspacePathSecurity.EnsureSafeChain(dataRoot, dataRoot);
+Directory.CreateDirectory(stateRoot);
+WorkspacePathSecurity.EnsureSafeChain(stateRoot, stateRoot);
+Directory.CreateDirectory(jobRoot);
+WorkspacePathSecurity.EnsureSafeChain(jobRoot, jobRoot);
 Directory.CreateDirectory(watermarkAssetRoot);
 WorkspacePathSecurity.EnsureSafeChain(watermarkAssetRoot, watermarkAssetRoot);
 Environment.SetEnvironmentVariable("INACTIVEPDF_WATERMARK_ASSET_PATH", watermarkAssetRoot);
@@ -63,6 +70,15 @@ builder.Services.AddSingleton<ConversionConcurrencyGate>();
 builder.Services.AddSingleton<LiteDbJobStore>(_ => new LiteDbJobStore(Path.Combine(stateRoot, "inactivepdf.db")));
 builder.Services.AddSingleton<IJobPersistence>(services => services.GetRequiredService<LiteDbJobStore>());
 builder.Services.AddSingleton<IJobStatusStore>(services => services.GetRequiredService<LiteDbJobStore>());
+builder.Services.AddSingleton<ApiKeyStore>(_ => new ApiKeyStore(Path.Combine(stateRoot, "api-keys.json")));
+builder.Services.AddSingleton<ApiUsageStore>(_ => new ApiUsageStore(Path.Combine(stateRoot, "api-usage.json")));
+builder.Services.AddSingleton<AuditEventStore>(_ => new AuditEventStore(Path.Combine(stateRoot, "audit-events.jsonl")));
+builder.Services.AddSingleton<ApiAdmissionService>(services => new ApiAdmissionService(
+    services.GetRequiredService<ApiKeyStore>(),
+    requestLimits,
+    services.GetRequiredService<ResourcePolicy>(),
+    Path.Combine(stateRoot, "api-quota-usage.json"),
+    services.GetRequiredService<ApiUsageStore>()));
 builder.Services.AddSingleton(new WorkspaceOptions { RootPath = jobRoot });
 builder.Services.AddSingleton<IJobWorkspaceFactory, FileSystemJobWorkspaceFactory>();
 builder.Services.AddSingleton<JobWorkspaceService>();
@@ -72,6 +88,7 @@ builder.Services.AddSingleton<SwarmScheduler>();
 builder.Services.AddSingleton<ServiceProfileStore>();
 builder.Services.AddSingleton(_ => new ConversionTelemetryStore(Path.Combine(stateRoot, "analytics.db")));
 builder.Services.AddSingleton<AdministrationLiveService>();
+builder.Services.AddSingleton<AdministrationSearchService>();
 builder.Services.AddSingleton<IWatermarkService, PdfWatermarkService>();
 builder.Services.AddSingleton<WatermarkProfileStore>();
 builder.Services.AddSingleton<LibreOfficeSessionHost>();
@@ -79,6 +96,7 @@ builder.Services.AddHostedService<LibreOfficeSessionLifecycle>();
 builder.Services.AddSingleton<IsolatedConversionService>();
 builder.Services.AddSingleton<IConversionWorkProcessor, IsolatedConversionWorkProcessor>();
 builder.Services.AddSingleton<ConversionMetrics>();
+builder.Services.AddSingleton<JobCancellationRegistry>();
 builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = requestLimits.MaximumRequestBytes);
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = requestLimits.MaximumRequestBytes);
 builder.Services.AddSingleton<IConversionJobBuffer>(services => new ConversionJobBuffer(services.GetRequiredService<ConversionWorkerOptions>().QueueCapacity));
@@ -92,6 +110,15 @@ builder.Services.AddHealthChecks()
     .AddCheck<ConversionReadinessHealthCheck>("conversion-readiness", tags: ["ready"]);
 
 var app = builder.Build();
+app.Use(async (context, next) =>
+{
+    var requestedId = context.Request.Headers["X-Request-Id"].ToString().Trim();
+    context.TraceIdentifier = requestedId.Length is > 0 and <= 128 && requestedId.All(character => char.IsLetterOrDigit(character) || character is '-' or '_' or '.')
+        ? requestedId
+        : Guid.NewGuid().ToString("N");
+    context.Response.Headers["X-Request-ID"] = context.TraceIdentifier;
+    await next();
+});
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions
 {
@@ -100,48 +127,63 @@ app.UseStaticFiles(new StaticFileOptions
 app.MapGet("/", () => Results.File(Path.Combine(AppContext.BaseDirectory, "wwwroot", "index.html"), "text/html"));
 app.MapGet("/console.css", () => Results.File(Path.Combine(AppContext.BaseDirectory, "wwwroot", "console.css"), "text/css"));
 app.MapGet("/console.js", () => Results.File(Path.Combine(AppContext.BaseDirectory, "wwwroot", "console.js"), "text/javascript"));
+app.MapGet("/api-reference", () => Results.File(Path.Combine(AppContext.BaseDirectory, "wwwroot", "api-reference.html"), "text/html"));
+app.MapGet("/openapi.json", () => Results.File(Path.Combine(AppContext.BaseDirectory, "wwwroot", "openapi.json"), "application/json"));
 
+app.UseRouting();
 var apiToken = Environment.GetEnvironmentVariable("INACTIVEPDF_API_TOKEN");
-if (!string.IsNullOrWhiteSpace(apiToken))
+app.Use(async (context, next) =>
 {
-    app.Use(async (context, next) =>
-    {
-        if (context.Request.Path.StartsWithSegments("/health") || context.Request.Path.StartsWithSegments("/ready") ||
-            (HttpMethods.IsGet(context.Request.Method) && context.Request.Path.Value is "/" or "/console.css" or "/console.js"))
-        {
-            await next();
-            return;
-        }
-        var supplied = context.Request.Headers.Authorization.ToString();
-        var expected = $"Bearer {apiToken}";
-        if (supplied.Length != expected.Length || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(supplied), System.Text.Encoding.UTF8.GetBytes(expected)))
-        {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsJsonAsync(new { code = "unauthorized", message = "A valid bearer token is required." });
-            return;
-        }
-        await next();
-    });
-}
+    var keyStore = context.RequestServices.GetRequiredService<ApiKeyStore>();
+    var identity = ApiAuthentication.Authenticate(context, keyStore, apiToken, DateTimeOffset.UtcNow);
+    if (identity is not null) context.Items[ApiAuthentication.IdentityItem] = identity;
+    await next();
+});
 
 app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
 {
     var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+    var classification = exception is null
+        ? new ConversionFailureClassification("conversion_failed", "The conversion could not be completed.", false)
+        : ConversionFailureClassifier.Classify(exception);
     context.Response.ContentType = "application/json";
     context.Response.StatusCode = exception is ConversionFormatException
         ? StatusCodes.Status422UnprocessableEntity
+        : exception is ConversionResourceLimitException
+            ? StatusCodes.Status413PayloadTooLarge
+            : exception is TimeoutException
+                ? StatusCodes.Status504GatewayTimeout
         : StatusCodes.Status500InternalServerError;
-    var code = exception is ConversionFormatException format ? format.Code : "conversion_failed";
-    await context.Response.WriteAsJsonAsync(new { code, message = exception?.Message ?? "The conversion failed." });
+    context.Response.Headers["X-Request-ID"] = context.TraceIdentifier;
+    await context.Response.WriteAsJsonAsync(new
+    {
+        code = classification.Code,
+        message = classification.Message,
+        retryable = classification.IsRetryable,
+        requestId = context.TraceIdentifier
+    });
 }));
+
+app.Use(async (context, next) =>
+{
+    try { await next(); }
+    finally
+    {
+        if (context.Request.Path.StartsWithSegments("/v1", StringComparison.OrdinalIgnoreCase))
+            context.RequestServices.GetRequiredService<AuditEventStore>().Record(context);
+    }
+});
 
 app.MapHealthChecks("/health");
 app.MapHealthChecks("/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready", StringComparer.OrdinalIgnoreCase) });
+ConversionEndpoints.Map(app);
 JobEndpoints.Map(app);
 AdministrationEndpoints.Map(app);
 CompatibilityEndpoints.Map(app);
-app.MapGet("/v1/watermark-profiles", (WatermarkProfileStore store) => Results.Ok(store.List()));
-app.MapGet("/v1/watermark-profiles/{name}", (string name, WatermarkProfileStore store) => store.TryGet(name, out var profile) ? Results.Ok(profile) : Results.NotFound());
+app.MapGet("/v1/watermark-profiles", (WatermarkProfileStore store) => Results.Ok(store.List())).RequireScope(ApiKeyScopes.ProfilesRead);
+app.MapGet("/v1/watermark-profiles/{name}", (string name, WatermarkProfileStore store) => store.TryGet(name, out var profile) ? Results.Ok(profile) : Results.NotFound()).RequireScope(ApiKeyScopes.ProfilesRead);
+app.MapGet("/v1/profiles", (WatermarkProfileStore store) => Results.Ok(ProfileApiResponses.Catalog(store))).RequireScope(ApiKeyScopes.ProfilesRead);
+app.MapGet("/v1/profiles/{name}", (string name, WatermarkProfileStore store) => ProfileApiResponses.Lookup(name, store) is { } profile ? Results.Ok(profile) : Results.NotFound()).RequireScope(ApiKeyScopes.ProfilesRead);
 app.MapPut("/v1/watermark-profiles/{name}", (string name, WatermarkOptions profile, WatermarkProfileStore store) =>
 {
     var errors = InactivePDF.Application.Watermarks.WatermarkProfileValidator.Validate(profile);
@@ -149,13 +191,13 @@ app.MapPut("/v1/watermark-profiles/{name}", (string name, WatermarkOptions profi
     if (!WatermarkProfileStore.IsValidName(name)) return Results.BadRequest(new { code = "invalid_profile_name" });
     store.Save(name, profile);
     return Results.Ok(profile);
-});
-app.MapDelete("/v1/watermark-profiles/{name}", (string name, WatermarkProfileStore store) => store.Delete(name) ? Results.NoContent() : Results.NotFound());
+}).RequireAdministrator();
+app.MapDelete("/v1/watermark-profiles/{name}", (string name, WatermarkProfileStore store) => store.Delete(name) ? Results.NoContent() : Results.NotFound()).RequireAdministrator();
 app.MapGet("/v1/watermark-assets", () => Results.Ok(Directory.EnumerateFiles(watermarkAssetRoot, "*", SearchOption.TopDirectoryOnly)
     .Where(path => !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
     .Select(Path.GetFileName)
     .Where(name => !string.IsNullOrWhiteSpace(name))
-    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)));
+    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase))).RequireScope(ApiKeyScopes.WatermarksRead);
 app.MapPost("/v1/watermark-assets", async (HttpRequest request, CancellationToken cancellationToken) =>
 {
     if (!request.HasFormContentType) return Results.BadRequest(new { code = "multipart_form_required", message = "Upload an image file using multipart field 'file'." });
@@ -189,7 +231,7 @@ app.MapPost("/v1/watermark-assets", async (HttpRequest request, CancellationToke
     {
         return Results.BadRequest(new { code = "unsafe_asset_path", message = "The asset path is not allowed." });
     }
-});
+}).RequireAdministrator();
 app.MapGet("/v1/watermark-assets/{name}", (string name) =>
 {
     try
@@ -198,13 +240,17 @@ app.MapGet("/v1/watermark-assets/{name}", (string name) =>
         return Results.File(path, GetAssetContentType(path));
     }
     catch (UnauthorizedAccessException) { return Results.NotFound(); }
-});
+}).RequireScope(ApiKeyScopes.WatermarksRead);
 app.MapGet("/v1/capabilities", () => Results.Ok(new
 {
     service = "InactivePDF",
     version = "0.1.0-beta",
+    openApi = "/openapi.json",
+    apiReference = "/api-reference",
     runtime = ".NET 10",
     platform = "Windows Server 2016+",
+    executionModes = Enum.GetNames<ConversionExecutionMode>(),
+    executionMode = ConversionExecutionModeParser.FromEnvironment(),
     operations = ApiCapabilities.Operations,
     formats = SupportedFormatCatalog.All.Select(format => new
     {
@@ -231,7 +277,7 @@ app.MapGet("/v1/capabilities", () => Results.Ok(new
         profile.LargeMarkupPolicy,
         profile.StructuralValidation
     })
-}));
+})).RequireAdministrator();
 app.MapGet("/v1/metrics", (ConversionMetrics metrics, IConversionJobBuffer queue) => Results.Ok(new
 {
     metrics.Accepted,
@@ -241,7 +287,7 @@ app.MapGet("/v1/metrics", (ConversionMetrics metrics, IConversionJobBuffer queue
     metrics.DeadLettered,
     queueDepth = queue.Count,
     queueCapacity = queue.Capacity
-}));
+})).RequireAdministrator();
 
 app.Run();
 

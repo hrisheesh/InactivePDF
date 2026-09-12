@@ -27,6 +27,7 @@ CreateLegacyOfficeFile(Path.Combine(fixtures, "sample.pptx"), Path.Combine(fixtu
 CreateLegacyOfficeFile(Path.Combine(fixtures, "sample.docx"), Path.Combine(fixtures, "sample.doc"), "doc", "MS Word 97");
 CreateLegacyOfficeFile(Path.Combine(fixtures, "sample.docx"), Path.Combine(fixtures, "sample.dot"), "doc", "MS Word 97");
 CreateLegacyOfficeFile(Path.Combine(fixtures, "sample.xlsx"), Path.Combine(fixtures, "sample.xls"), "xls", "MS Excel 97");
+CreateLegacyOfficeFile(Path.Combine(fixtures, "sample.xlsx"), Path.Combine(fixtures, "sample.ods"), "ods", null);
 CreateLegacyOfficeFile(Path.Combine(fixtures, "sample.pptx"), Path.Combine(fixtures, "sample.ppt"), "ppt", "MS PowerPoint 97");
 CopyFixture("sample.csv", "fixture-data-csv.csv");
 CopyFixture("sample.pdf", "fixture-existing-pdf.pdf");
@@ -44,6 +45,7 @@ CopyFixture("sample.ppt", "fixture-presentation-ppt.ppt");
 CopyFixture("sample.pptx", "fixture-presentation-pptx.pptx");
 CopyFixture("sample.xls", "fixture-spreadsheet-xls.xls");
 CopyFixture("sample.xlsx", "fixture-spreadsheet-xlsx.xlsx");
+CopyFixture("sample.ods", "fixture-spreadsheet-ods.ods");
 CopyFixture("sample.rtf", "fixture-text-rtf.rtf");
 CopyFixture("sample.txt", "fixture-text-txt.txt");
 CopyFixture("sample.html", "fixture-web-html.html");

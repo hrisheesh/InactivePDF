@@ -1,4 +1,5 @@
 using InactivePDF.Application.Capabilities;
+using InactivePDF.Infrastructure.Processes;
 using InactivePDF.Infrastructure.Validation;
 
 namespace InactivePDF.UnitTests.Validation;
@@ -67,6 +68,24 @@ public sealed class InputFormatValidatorTests
             var exception = Assert.Throws<ConversionFormatException>(() => InputFormatValidator.Validate(package, "spreadsheet.ods"));
 
             Assert.Equal("invalid_package", exception.Code);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
+    public async Task ProductionTextValidationStopsAfterTheBoundedDiagnosticSample()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var path = Path.Combine(root, "large.txt");
+            var content = Enumerable.Repeat((byte)'a', 2_000_000).ToArray();
+            content[1_500_000] = 0xC3;
+            content[1_500_001] = 0x28;
+            await File.WriteAllBytesAsync(path, content);
+
+            Assert.Throws<ConversionFormatException>(() => InputFormatValidator.Validate(path, "large.txt", executionMode: ConversionExecutionMode.Development));
+            Assert.Equal("text", InputFormatValidator.Validate(path, "large.txt", executionMode: ConversionExecutionMode.Production).Signature);
         }
         finally { DeleteRoot(root); }
     }

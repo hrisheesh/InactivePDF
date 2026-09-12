@@ -6,5 +6,7 @@
   <Project Path="src/InactivePDF.Api/InactivePDF.Api.csproj" />
   <Project Path="src/InactivePDF.Client/InactivePDF.Client.csproj" />
   <Project Path="tools/InactivePDF.Fidelity/InactivePDF.Fidelity.csproj" />
+  <Project Path="tools/InactivePDF.Fixtures/InactivePDF.Fixtures.csproj" />
+  <Project Path="tools/InactivePDF.ReleaseCheck/InactivePDF.ReleaseCheck.csproj" />
   <Project Path="tests/InactivePDF.UnitTests/InactivePDF.UnitTests.csproj" />
 </Solution>

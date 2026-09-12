@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using InactivePDF.Application;
 using InactivePDF.Application.Abstractions;
 using InactivePDF.Application.Models;
+using InactivePDF.Application.Policies;
 using InactivePDF.Domain.Models;
 using LiteDB;
 using JsonSerializer = System.Text.Json.JsonSerializer;
@@ -34,10 +36,12 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
         _pending = _database.GetCollection<BsonDocument>("pending_work");
         _deadLetters = _database.GetCollection<BsonDocument>("dead_letters");
         _jobs.EnsureIndex(document => document["correlationId"]);
+        _jobs.EnsureIndex(document => document["acceptedAt"]);
         _jobs.EnsureIndex(document => document["updatedAt"]);
         _pending.EnsureIndex(document => document["createdAt"]);
         _pending.EnsureIndex(document => document["nextAttemptAt"]);
         _pending.EnsureIndex(document => document["leaseExpiresAt"]);
+        RecoverInterruptedJobs();
     }
 
     public Task<JobStatus?> GetAsync(Guid jobId, CancellationToken cancellationToken = default)
@@ -54,6 +58,28 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
 
     public int PendingCount => _pending.Count();
 
+    private void RecoverInterruptedJobs()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var document in _jobs.FindAll().ToList())
+        {
+            var status = ReadStatus(document);
+            if (status?.State is not (ConversionJobState.Processing or ConversionJobState.WaitingForResources or ConversionJobState.Running)) continue;
+            _jobs.Update(ToDocument(status with
+            {
+                State = ConversionJobState.Interrupted,
+                UpdatedAt = now,
+                ErrorCode = "service_restarted_before_completion",
+                ErrorMessage = "The service restarted before this job completed.",
+                CurrentWorker = null,
+                CurrentLane = null
+            }, ReadNullableString(document, "requestFingerprint")));
+        }
+    }
+
+    public int PendingCountForOwner(Guid ownerApiKeyId) => _pending.FindAll()
+        .Count(document => IsNotDeadLetter(document) && ReadNullableGuid(document, "ownerApiKeyId") == ownerApiKeyId);
+
     public IReadOnlyList<JobStatus> SearchJobs(string query)
     {
         var text = query.Trim();
@@ -61,6 +87,36 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
         var filter = Query.Or(Query.Contains("_id", idText.Length > 0 ? idText : text), Query.Contains("correlationId", text), Query.Contains("errorCode", text));
         if (Enum.TryParse<ConversionJobState>(text, true, out var state)) filter = Query.Or(filter, Query.EQ("state", (int)state));
         return _jobs.Find(filter, limit: 30).Select(ReadStatus).OfType<JobStatus>().ToArray();
+    }
+
+    public Task<JobPage> ListAsync(JobQuery query, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        cancellationToken.ThrowIfCancellationRequested();
+        var limit = Math.Clamp(query.Limit, 1, 100);
+        var jobs = _jobs.FindAll()
+            .Select(ReadStatus)
+            .OfType<JobStatus>()
+            .Where(status => query.OwnerApiKeyId is null || status.OwnerApiKeyId == query.OwnerApiKeyId)
+            .Where(status => query.State is null || status.State == query.State)
+            .Where(status => string.IsNullOrWhiteSpace(query.Source) || string.Equals(status.Source, query.Source.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Where(status => string.IsNullOrWhiteSpace(query.Format) || string.Equals(status.Format, query.Format.Trim().TrimStart('.'), StringComparison.OrdinalIgnoreCase))
+            .Where(status => query.CreatedAfter is null || status.AcceptedAt >= query.CreatedAfter)
+            .Where(status => query.CreatedBefore is null || status.AcceptedAt <= query.CreatedBefore)
+            .OrderByDescending(status => status.AcceptedAt)
+            .ThenByDescending(status => status.JobId)
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(query.Cursor))
+        {
+            if (!TryDecodeCursor(query.Cursor, out var cursorDate, out var cursorId))
+                throw new ArgumentException("The cursor is invalid.", nameof(query));
+            jobs = jobs.Where(status => status.AcceptedAt < cursorDate || status.AcceptedAt == cursorDate && status.JobId.CompareTo(cursorId) < 0).ToList();
+        }
+
+        var page = jobs.Take(limit).ToArray();
+        var nextCursor = jobs.Count > limit && page.Length > 0 ? EncodeCursor(page[^1]) : null;
+        return Task.FromResult(new JobPage(page, nextCursor));
     }
 
     public Task<JobStatus?> FindByCorrelationIdAsync(string correlationId, CancellationToken cancellationToken = default)
@@ -115,15 +171,142 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
             var existing = _jobs.FindOne(Query.EQ("correlationId", status.CorrelationId));
             if (existing is not null)
             {
-                EnsureMatchingFingerprint(existing, status.CorrelationId, requestFingerprint);
-                _database.Rollback();
-                return ReadStatus(existing);
+                var existingStatus = ReadStatus(existing);
+                var expiresAt = existingStatus?.IdempotencyExpiresAt ?? existingStatus?.AcceptedAt.AddHours(24);
+                if (expiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow)
+                {
+                    _jobs.Delete(existing["_id"].AsString);
+                    _pending.Delete(existing["_id"].AsString);
+                    _deadLetters.Delete(existing["_id"].AsString);
+                }
+                else
+                {
+                    EnsureMatchingFingerprint(existing, status.CorrelationId, requestFingerprint);
+                    _database.Rollback();
+                    return existingStatus;
+                }
             }
 
             _jobs.Insert(ToDocument(status, requestFingerprint));
             _pending.Insert(ToPendingDocument(pendingWork, DateTimeOffset.UtcNow));
             _database.Commit();
             return null;
+        }
+        catch
+        {
+            try { _database.Rollback(); } catch (InvalidOperationException) { }
+            throw;
+        }
+        finally { _writeGate.Release(); }
+    }
+
+    public async Task<JobStatus?> CancelAsync(Guid jobId, DateTimeOffset now, CancellationToken cancellationToken = default)
+    {
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var document = _jobs.FindById(jobId.ToString("N"));
+            var current = ReadStatus(document);
+            if (current is null) return null;
+            if (current.State is ConversionJobState.Succeeded or ConversionJobState.Failed or ConversionJobState.Cancelled or ConversionJobState.DeadLettered)
+                return current;
+
+            BeginTransactionOrThrow();
+            var updated = current with
+            {
+                State = ConversionJobState.Cancelled,
+                UpdatedAt = now,
+                ErrorCode = "cancelled",
+                ErrorMessage = "The job was cancelled by the client.",
+                CurrentWorker = null,
+                CurrentLane = null
+            };
+            _jobs.Upsert(ToDocumentPreservingFingerprint(updated));
+            if (current.State is not ConversionJobState.Processing and not ConversionJobState.Running)
+                _pending.Delete(jobId.ToString("N"));
+            _database.Commit();
+            return updated;
+        }
+        catch
+        {
+            try { _database.Rollback(); } catch (InvalidOperationException) { }
+            throw;
+        }
+        finally { _writeGate.Release(); }
+    }
+
+    public async Task<JobStatus?> RetryAsync(Guid jobId, DateTimeOffset now, CancellationToken cancellationToken = default)
+    {
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var current = ReadStatus(_jobs.FindById(jobId.ToString("N")));
+            if (current is null) return null;
+            if (current.State is not (ConversionJobState.Failed or ConversionJobState.DeadLettered or ConversionJobState.Interrupted))
+                return current;
+            var deadLetter = ReadDeadLetter(_deadLetters.FindById(jobId.ToString("N")));
+            var work = deadLetter?.WorkItem;
+            if (work is null)
+            {
+                var pending = _pending.FindById(jobId.ToString("N"));
+                work = pending is null ? null : DeserializePending(pending);
+            }
+            if (work is null) throw new InvalidOperationException("The job has no retryable work payload.");
+            if (work.Inputs.Any(input => !File.Exists(input.Path)))
+                throw new FileNotFoundException("The original input is no longer available for retry.");
+
+            work = work with
+            {
+                Job = work.Job with { State = ConversionJobState.Queued },
+                Attempt = Math.Max(work.Attempt, current.Attempts),
+                LeaseOwner = null
+            };
+            var updated = current with
+            {
+                State = ConversionJobState.Queued,
+                UpdatedAt = now,
+                ErrorCode = null,
+                ErrorMessage = null,
+                OutputPath = null,
+                ProgressPercent = 0,
+                CurrentWorker = null,
+                CurrentLane = null,
+                QueueWaitMilliseconds = 0,
+                ProcessingMilliseconds = 0,
+                OutputBytes = 0,
+                CompressionPercent = null
+            };
+
+            BeginTransactionOrThrow();
+            _jobs.Upsert(ToDocumentPreservingFingerprint(updated));
+            _pending.Upsert(ToPendingDocument(work, now));
+            _database.Commit();
+            return updated;
+        }
+        catch
+        {
+            try { _database.Rollback(); } catch (InvalidOperationException) { }
+            throw;
+        }
+        finally { _writeGate.Release(); }
+    }
+
+    public async Task<JobStatus?> DeleteAsync(Guid jobId, CancellationToken cancellationToken = default)
+    {
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var current = ReadStatus(_jobs.FindById(jobId.ToString("N")));
+            if (current is null) return null;
+            BeginTransactionOrThrow();
+            _jobs.Delete(jobId.ToString("N"));
+            _pending.Delete(jobId.ToString("N"));
+            _deadLetters.Delete(jobId.ToString("N"));
+            _database.Commit();
+            return current;
         }
         catch
         {
@@ -364,6 +547,12 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
             var pending = _pending.FindById(status.JobId.ToString("N"));
             if (leaseOwner is not null && (pending is null || !HasLease(pending, leaseOwner)))
                 throw new ConversionLeaseLostException(status.JobId);
+            if (ReadStatus(_jobs.FindById(status.JobId.ToString("N")))?.State == ConversionJobState.Cancelled)
+            {
+                _pending.Delete(status.JobId.ToString("N"));
+                _database.Commit();
+                return;
+            }
             _jobs.Upsert(ToDocumentPreservingFingerprint(status));
             _pending.Delete(status.JobId.ToString("N"));
             _database.Commit();
@@ -412,11 +601,12 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
             if (leaseOwner is not null && (pending is null || !HasLease(pending, leaseOwner)))
                 throw new ConversionLeaseLostException(status.JobId);
 
+            var classification = ConversionFailureClassifier.Classify(exception);
             _jobs.Upsert(ToDocumentPreservingFingerprint(status with
             {
                 State = ConversionJobState.DeadLettered,
                 ErrorCode = errorCode,
-                ErrorMessage = exception.Message
+                ErrorMessage = classification.Message
             }));
             _pending.Delete(status.JobId.ToString("N"));
             var attemptHistory = ReadAttemptHistory(pending);
@@ -428,8 +618,8 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
                 ["operation"] = (int)work.Job.Operation,
                 ["attempt"] = work.Attempt,
                 ["errorCode"] = errorCode,
-                ["errorType"] = exception.GetType().FullName ?? exception.GetType().Name,
-                ["error"] = exception.ToString(),
+                ["errorType"] = exception.GetType().Name,
+                ["error"] = classification.Message,
                 ["payload"] = JsonSerializer.Serialize(work, JsonOptions),
                 ["attemptHistory"] = JsonSerializer.Serialize(attemptHistory, JsonOptions),
                 ["createdAt"] = DateTimeOffset.UtcNow.ToString("O")
@@ -474,6 +664,7 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
         ["_id"] = work.Job.Id.ToString("N"),
         ["payload"] = JsonSerializer.Serialize(work with { LeaseOwner = null }, JsonOptions),
         ["state"] = "pending",
+        ["ownerApiKeyId"] = work.Job.OwnerApiKeyId?.ToString("N") ?? BsonValue.Null,
         ["attempt"] = work.Attempt,
         ["createdAt"] = now.ToString("O"),
         ["updatedAt"] = now.ToString("O"),
@@ -494,10 +685,23 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
         ["acceptedAt"] = status.AcceptedAt.ToString("O"),
         ["updatedAt"] = status.UpdatedAt.ToString("O"),
         ["attempts"] = status.Attempts,
+        ["ownerApiKeyId"] = status.OwnerApiKeyId?.ToString("N") ?? BsonValue.Null,
         ["outputPath"] = status.OutputPath is null ? BsonValue.Null : status.OutputPath,
         ["errorCode"] = status.ErrorCode is null ? BsonValue.Null : status.ErrorCode,
         ["errorMessage"] = status.ErrorMessage is null ? BsonValue.Null : status.ErrorMessage,
-        ["requestFingerprint"] = requestFingerprint is null ? BsonValue.Null : requestFingerprint
+        ["requestFingerprint"] = requestFingerprint is null ? BsonValue.Null : requestFingerprint,
+        ["source"] = status.Source,
+        ["format"] = status.Format is null ? BsonValue.Null : status.Format,
+        ["progressPercent"] = status.ProgressPercent,
+        ["currentWorker"] = status.CurrentWorker is null ? BsonValue.Null : status.CurrentWorker,
+        ["currentLane"] = status.CurrentLane is null ? BsonValue.Null : status.CurrentLane,
+        ["queueWaitMilliseconds"] = status.QueueWaitMilliseconds,
+        ["processingMilliseconds"] = status.ProcessingMilliseconds,
+        ["inputBytes"] = status.InputBytes,
+        ["outputBytes"] = status.OutputBytes,
+        ["compressionPercent"] = status.CompressionPercent is null ? BsonValue.Null : status.CompressionPercent.Value,
+        ["idempotencyExpiresAt"] = status.IdempotencyExpiresAt?.ToString("O") ?? BsonValue.Null,
+        ["retryCount"] = status.RetryCount
     };
 
     private BsonDocument ToDocumentPreservingFingerprint(JobStatus status) =>
@@ -554,8 +758,27 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
             document["attempts"].AsInt32,
             ReadNullableString(document, "outputPath"),
             ReadNullableString(document, "errorCode"),
-            ReadNullableString(document, "errorMessage"));
+            ReadNullableString(document, "errorMessage"),
+            ReadNullableGuid(document, "ownerApiKeyId"),
+            ReadNullableString(document, "source") ?? "API",
+            ReadNullableString(document, "format"),
+            ReadInt(document, "progressPercent"),
+            ReadNullableString(document, "currentWorker"),
+            ReadNullableString(document, "currentLane"),
+            ReadLong(document, "queueWaitMilliseconds"),
+            ReadLong(document, "processingMilliseconds"),
+            ReadLong(document, "inputBytes"),
+            ReadLong(document, "outputBytes"),
+            ReadNullableDouble(document, "compressionPercent"),
+            ReadNullableDate(document, "idempotencyExpiresAt"),
+            ReadInt(document, "retryCount", Math.Max(0, ReadInt(document, "attempts") - 1)));
     }
+
+    private static int ReadInt(BsonDocument document, string key, int fallback = 0) => document.TryGetValue(key, out var value) && !value.IsNull ? value.AsInt32 : fallback;
+    private static long ReadLong(BsonDocument document, string key) => document.TryGetValue(key, out var value) && !value.IsNull ? value.AsInt64 : 0;
+    private static double? ReadNullableDouble(BsonDocument document, string key) => document.TryGetValue(key, out var value) && !value.IsNull ? value.AsDouble : null;
+    private static DateTimeOffset? ReadNullableDate(BsonDocument document, string key) =>
+        DateTimeOffset.TryParse(ReadNullableString(document, key), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : null;
 
     private static DateTimeOffset ReadDate(BsonDocument document, string key) =>
         document.TryGetValue(key, out var value) && !value.IsNull && DateTimeOffset.TryParse(value.AsString, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed)
@@ -564,6 +787,32 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
 
     private static string? ReadNullableString(BsonDocument document, string key) =>
         !document.TryGetValue(key, out var value) || value.IsNull ? null : value.AsString;
+
+    private static Guid? ReadNullableGuid(BsonDocument document, string key) =>
+        Guid.TryParseExact(ReadNullableString(document, key), "N", out var value) ? value : null;
+
+    private static string EncodeCursor(JobStatus status)
+    {
+        var value = $"{status.AcceptedAt.UtcTicks}:{status.JobId:N}";
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+    }
+
+    private static bool TryDecodeCursor(string value, out DateTimeOffset acceptedAt, out Guid jobId)
+    {
+        acceptedAt = default;
+        jobId = default;
+        try
+        {
+            var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(value));
+            var parts = decoded.Split(':', 2);
+            if (parts.Length != 2 || !long.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var ticks) || !Guid.TryParseExact(parts[1], "N", out jobId))
+                return false;
+            acceptedAt = new DateTimeOffset(ticks, TimeSpan.Zero);
+            return true;
+        }
+        catch (FormatException) { return false; }
+        catch (ArgumentOutOfRangeException) { return false; }
+    }
 
     private static DeadLetterRecord? ReadDeadLetter(BsonDocument? document)
     {
@@ -577,7 +826,7 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
             document["attempt"].AsInt32,
             document["errorCode"].AsString,
             document["errorType"].AsString,
-            document["error"].AsString,
+            ConversionFailureClassifier.SafeMessageForCode(document["errorCode"].AsString),
             ReadDate(document, "createdAt"),
             ReadAttemptHistory(document),
             payload with { LeaseOwner = null });
@@ -589,7 +838,13 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
         if (string.IsNullOrWhiteSpace(serialized)) return [];
         try
         {
-            return JsonSerializer.Deserialize<List<ConversionAttemptDiagnostic>>(serialized, JsonOptions) ?? [];
+            return (JsonSerializer.Deserialize<List<ConversionAttemptDiagnostic>>(serialized, JsonOptions) ?? [])
+                .Select(attempt => attempt with
+                {
+                    Message = ConversionFailureClassifier.SafeMessageForCode(attempt.ErrorCode),
+                    Exception = ConversionFailureClassifier.SafeMessageForCode(attempt.ErrorCode)
+                })
+                .ToList();
         }
         catch (JsonException)
         {
@@ -611,8 +866,8 @@ public sealed class LiteDbJobStore : IJobPersistence, IDisposable
             attempt,
             DateTimeOffset.UtcNow,
             errorCode,
-            exception.GetType().FullName ?? exception.GetType().Name,
-            exception.Message,
-            exception.ToString(),
+            exception.GetType().Name,
+            ConversionFailureClassifier.SafeMessageForCode(errorCode),
+            ConversionFailureClassifier.SafeMessageForCode(errorCode),
             retryable);
 }

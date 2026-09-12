@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using InactivePDF.Application.Capabilities;
 using InactivePDF.Domain.Models;
 using InactivePDF.Infrastructure.Jobs;
+using InactivePDF.Infrastructure.Resources;
 using InactivePDF.Infrastructure.Watch;
 
 namespace InactivePDF.Infrastructure.Processes;
@@ -31,9 +32,10 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
         if (observation is not null) { observation.QueueWaitMs = admission?.WaitMs ?? 0; observation.WorkerId = admission?.WorkerId; }
         var started = Stopwatch.GetTimestamp();
         Exception? failure = null;
-        try { return await ConvertCoreAsync(request, cancellationToken).ConfigureAwait(false); }
+        IsolatedWorkerMetrics? metrics = null;
+        try { metrics = await ConvertCoreAsync(request, cancellationToken).ConfigureAwait(false); return metrics; }
         catch (Exception error) { failure = error; if (admission is not null) admission.Error = error; throw; }
-        finally { telemetry?.Complete(observation, Stopwatch.GetElapsedTime(started).TotalMilliseconds, request.OutputPath, failure); }
+        finally { telemetry?.Complete(observation, Stopwatch.GetElapsedTime(started).TotalMilliseconds, request.OutputPath, failure, metrics); }
     }
 
     private async Task<IsolatedWorkerMetrics> ConvertCoreAsync(
@@ -46,11 +48,12 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
         var requestPath = Path.Combine(
             Path.GetDirectoryName(outputPath)!,
             $".inactivepdf-worker-{Guid.NewGuid():N}.json");
+        var telemetryPath = request.ExecutionMode == ConversionExecutionMode.Development ? requestPath + ".metrics" : null;
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
 
         await File.WriteAllTextAsync(
             requestPath,
-            JsonSerializer.Serialize(request, JsonOptions),
+            JsonSerializer.Serialize(request with { TelemetryPath = telemetryPath }, JsonOptions),
             cancellationToken).ConfigureAwait(false);
 
         using var process = new Process
@@ -95,38 +98,37 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
             catch (OperationCanceledException)
             {
                 await TerminateAsync(process).ConfigureAwait(false);
-                var output = await standardOutput.ConfigureAwait(false);
-                var error = await standardError.ConfigureAwait(false);
-                throw new ConversionWorkerTimeoutException($"The isolated conversion worker exceeded {options.EffectiveWorkerTimeout}. ProcessId={process.Id}. StandardOutput={output.Trim()} StandardError={error.Trim()}");
+                _ = await standardOutput.ConfigureAwait(false);
+                _ = await standardError.ConfigureAwait(false);
+                throw new ConversionWorkerTimeoutException("The isolated conversion worker exceeded its configured time limit.");
             }
 
-            var standardOutputText = await standardOutput.ConfigureAwait(false);
+            _ = await standardOutput.ConfigureAwait(false);
             var standardErrorText = await standardError.ConfigureAwait(false);
             if (tracker.ResourceLimitExceeded)
             {
-                throw new ConversionResourceLimitException($"The isolated conversion worker exceeded the working-set limit of {options.MaximumWorkerWorkingSetBytes} bytes. ProcessId={process.Id}. StandardOutput={standardOutputText.Trim()} StandardError={standardErrorText.Trim()}");
+                throw new ConversionResourceLimitException("The isolated conversion worker exceeded its configured resource limit.");
             }
 
             if (process.ExitCode != 0)
             {
-                var diagnostics = $"StandardOutput={standardOutputText.Trim()} StandardError={standardErrorText.Trim()}";
                 if (TryReadFormatErrorCode(standardErrorText, out var code))
                 {
                     throw new ConversionFormatException(
                         code,
-                        $"The conversion worker rejected the input. {diagnostics}");
+                        "The conversion worker rejected the input.");
                 }
 
-                var retryable = !ContainsPermanentInputFailure(diagnostics);
-                throw new ConversionWorkerExecutionException($"The isolated conversion worker exited with code {process.ExitCode}. ProcessId={process.Id}. {diagnostics}", retryable);
+                var retryable = !ContainsPermanentInputFailure(standardErrorText);
+                throw new ConversionWorkerExecutionException("The isolated conversion worker failed.", retryable);
             }
 
             if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
             {
-                throw new ConversionWorkerExecutionException($"The isolated conversion worker exited successfully but did not produce a non-empty PDF at {outputPath}.");
+                throw new ConversionWorkerExecutionException("The isolated conversion worker did not produce a non-empty PDF.", isRetryable: false);
             }
 
-            return tracker!.Snapshot;
+            return tracker!.Snapshot with { Stages = telemetryPath is null ? null : await ReadStageReportAsync(telemetryPath).ConfigureAwait(false) };
         }
         finally
         {
@@ -140,7 +142,21 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
                 trackerCancellation.Dispose();
             }
             TryDelete(requestPath);
+            if (telemetryPath is not null) TryDelete(telemetryPath);
         }
+    }
+
+    private static async Task<ConversionStageReport?> ReadStageReportAsync(string path)
+    {
+        if (!File.Exists(path)) return null;
+        try
+        {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var stages = await JsonSerializer.DeserializeAsync<Dictionary<string, ConversionStageTiming>>(stream, JsonOptions).ConfigureAwait(false);
+            return stages is null ? null : new ConversionStageReport(stages);
+        }
+        catch (IOException) { return null; }
+        catch (JsonException) { return null; }
     }
 
     private static ProcessStartInfo BuildStartInfo(string requestPath)
@@ -169,11 +185,13 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
             throw new ArgumentException("At least one worker input is required.", nameof(request));
 
         var output = Path.GetFullPath(request.OutputPath);
+        WorkspacePathSecurity.EnsureSafeChain(output, Path.GetDirectoryName(output)!);
         foreach (var input in request.Inputs)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(input.Path);
             ArgumentException.ThrowIfNullOrWhiteSpace(input.FileName);
             var fullInput = Path.GetFullPath(input.Path);
+            WorkspacePathSecurity.EnsureSafeChain(fullInput, Path.GetDirectoryName(fullInput)!);
             if (!File.Exists(fullInput)) throw new FileNotFoundException("The worker input does not exist.", fullInput);
             if (string.Equals(fullInput, output, StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("The worker output must be different from every input.", nameof(request));
@@ -258,6 +276,8 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
         private int _peakThreadCount;
         private long _cpuMilliseconds;
         private long _peakProcessTreeMemoryBytes;
+        private long _processTreeCpuMilliseconds;
+        private int _peakProcessCount;
         private int _resourceLimitExceeded;
 
         public bool ResourceLimitExceeded => Volatile.Read(ref _resourceLimitExceeded) == 1;
@@ -268,7 +288,9 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
             Interlocked.Read(ref _peakPhysicalFootprintBytes),
             Volatile.Read(ref _peakThreadCount),
             Interlocked.Read(ref _cpuMilliseconds),
-            Interlocked.Read(ref _peakProcessTreeMemoryBytes));
+            Interlocked.Read(ref _peakProcessTreeMemoryBytes),
+            Interlocked.Read(ref _processTreeCpuMilliseconds),
+            Volatile.Read(ref _peakProcessCount));
 
         public async Task RunAsync(CancellationToken cancellationToken)
         {
@@ -296,6 +318,9 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
                 InterlockedMax(ref _peakPhysicalFootprintBytes, ProcessMemoryMetrics.Capture(process.Id).CurrentBytes);
                 var processTreeMemory = job?.PeakJobMemoryBytes ?? CaptureKnownProcessTreeMemory(process, _workerStartTime);
                 InterlockedMax(ref _peakProcessTreeMemoryBytes, processTreeMemory);
+                var processTree = CaptureKnownProcessTree(process, _workerStartTime);
+                InterlockedMax(ref _processTreeCpuMilliseconds, processTree.CpuMilliseconds);
+                InterlockedMax(ref _peakProcessCount, processTree.ProcessCount);
                 InterlockedMax(ref _peakThreadCount, process.Threads.Count);
                 InterlockedMax(ref _cpuMilliseconds, (long)process.TotalProcessorTime.TotalMilliseconds);
                 if (maximumWorkingSetBytes > 0 && (workingSet > maximumWorkingSetBytes || processTreeMemory > maximumWorkingSetBytes) && Interlocked.Exchange(ref _resourceLimitExceeded, 1) == 0)
@@ -359,6 +384,27 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
             return total;
         }
 
+        private static (long CpuMilliseconds, int ProcessCount) CaptureKnownProcessTree(Process worker, DateTime workerStartTime)
+        {
+            var cpu = (long)worker.TotalProcessorTime.TotalMilliseconds;
+            var count = 1;
+            var sessionPid = int.TryParse(Environment.GetEnvironmentVariable("INACTIVEPDF_LIBREOFFICE_SESSION_PID"), out var configuredPid) ? configuredPid : 0;
+            foreach (var candidate in Process.GetProcessesByName("soffice").Concat(Process.GetProcessesByName("soffice.bin")))
+            {
+                try
+                {
+                    if (candidate.Id == worker.Id || (candidate.Id != sessionPid && candidate.StartTime < workerStartTime)) continue;
+                    cpu = checked(cpu + (long)candidate.TotalProcessorTime.TotalMilliseconds);
+                    count++;
+                }
+                catch (System.ComponentModel.Win32Exception) { }
+                catch (InvalidOperationException) { }
+                catch (ArgumentException) { }
+                finally { candidate.Dispose(); }
+            }
+            return (cpu, count);
+        }
+
         private static DateTime TryGetStartTime(Process process)
         {
             try { return process.StartTime; }
@@ -375,4 +421,7 @@ public sealed record IsolatedWorkerMetrics(
     long PeakPhysicalFootprintBytes,
     int PeakThreadCount,
     long CpuMilliseconds,
-    long PeakProcessTreeMemoryBytes);
+    long PeakProcessTreeMemoryBytes,
+    long ProcessTreeCpuMilliseconds = 0,
+    int PeakProcessCount = 0,
+    ConversionStageReport? Stages = null);

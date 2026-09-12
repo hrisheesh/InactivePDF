@@ -3,6 +3,7 @@ using PdfSharp.Pdf.IO;
 using InactivePDF.Application.Capabilities;
 using InactivePDF.Domain.Contracts;
 using InactivePDF.Domain.Models;
+using InactivePDF.Infrastructure.Resources;
 
 namespace InactivePDF.Infrastructure.IO;
 
@@ -99,6 +100,7 @@ public sealed class PdfSharpOperations : IPdfOperations
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var fullPath = Path.GetFullPath(path);
+        WorkspacePathSecurity.EnsureSafeChain(fullPath, Path.GetDirectoryName(fullPath)!);
         if (!File.Exists(fullPath) || !Path.GetExtension(fullPath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
         {
             throw new FileNotFoundException("The PDF path does not exist or is not a PDF path.", path);
@@ -118,6 +120,7 @@ public sealed class PdfSharpOperations : IPdfOperations
 
         var directory = Path.GetDirectoryName(fullPath)!;
         Directory.CreateDirectory(directory);
+        WorkspacePathSecurity.EnsureSafeChain(fullPath, directory);
         return fullPath;
     }
 
@@ -141,14 +144,14 @@ public sealed class PdfSharpOperations : IPdfOperations
         {
             throw new ConversionFormatException(
                 "invalid_pdf",
-                $"The PDF '{Path.GetFileName(path)}' could not be read or is structurally invalid: {exception.Message}",
+                "The PDF could not be read or is structurally invalid.",
                 exception);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidDataException or InvalidOperationException)
         {
             throw new ConversionFormatException(
                 "invalid_pdf",
-                $"The PDF '{Path.GetFileName(path)}' could not be read or is structurally invalid: {exception.Message}",
+                "The PDF could not be read or is structurally invalid.",
                 exception);
         }
     }

@@ -26,9 +26,9 @@ public sealed class WatchFolderRetentionWorker(
                 if (result.DeletedFiles > 0)
                     WatchFolderRetentionLog.Reclaimed(logger, result.DeletedFiles, result.DeletedBytes);
             }
-            catch (Exception exception)
+            catch (Exception)
             {
-                WatchFolderRetentionLog.Failed(logger, exception);
+                WatchFolderRetentionLog.Failed(logger);
             }
 
             await Task.Delay(options.EffectiveSweepInterval, stoppingToken).ConfigureAwait(false);
@@ -42,5 +42,5 @@ internal static partial class WatchFolderRetentionLog
     public static partial void Reclaimed(ILogger logger, int deletedFiles, long deletedBytes);
 
     [LoggerMessage(LogLevel.Error, "Retention sweep could not complete for the watch folder.")]
-    public static partial void Failed(ILogger logger, Exception exception);
+    public static partial void Failed(ILogger logger);
 }

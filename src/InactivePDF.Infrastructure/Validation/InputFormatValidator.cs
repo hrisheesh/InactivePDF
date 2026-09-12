@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using InactivePDF.Application.Capabilities;
+using InactivePDF.Infrastructure.Processes;
 
 namespace InactivePDF.Infrastructure.Validation;
 
@@ -12,13 +13,18 @@ public sealed record InputFormatValidation(
 /// <summary>
 /// Validates the declared filename, optional content type, and file signature before routing.
 /// Generic multipart types such as application/octet-stream are deliberately accepted because
-/// legacy callers often do not provide a MIME type.
+/// legacy callers often do not provide a MIME type. Development scans text-like inputs fully;
+/// Production validates a bounded sample and leaves the required conversion read to the engine.
 /// </summary>
 public static class InputFormatValidator
 {
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    public static InputFormatValidation Validate(string path, string fileName, string? declaredContentType = null)
+    public static InputFormatValidation Validate(
+        string path,
+        string fileName,
+        string? declaredContentType = null,
+        ConversionExecutionMode executionMode = ConversionExecutionMode.Development)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
@@ -34,7 +40,7 @@ public static class InputFormatValidator
         }
 
         ValidateContentType(format, declaredContentType);
-        var signature = DetectSignature(fullPath, format);
+        var signature = DetectSignature(fullPath, format, executionMode);
         return new InputFormatValidation(format, signature.ContentType, signature.Name);
     }
 
@@ -50,7 +56,7 @@ public static class InputFormatValidator
         }
     }
 
-    private static (string Name, string ContentType) DetectSignature(string path, SupportedFormatDescriptor format)
+    private static (string Name, string ContentType) DetectSignature(string path, SupportedFormatDescriptor format, ConversionExecutionMode executionMode)
     {
         var header = new byte[512];
         using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, header.Length, FileOptions.SequentialScan))
@@ -74,7 +80,7 @@ public static class InputFormatValidator
         }
 
         if (format.Category is ConversionFormatCategory.PlainText or ConversionFormatCategory.Html or ConversionFormatCategory.Rtf)
-            ValidateTextLikeFile(path, format);
+            ValidateTextLikeFile(path, format, executionMode);
         else if (format.Route == ConversionFormatRoute.LibreOffice && IsZipContainer(format))
             ValidateZipContainer(path, format);
 
@@ -87,7 +93,7 @@ public static class InputFormatValidator
         });
     }
 
-    private static void ValidateTextLikeFile(string path, SupportedFormatDescriptor format)
+    private static void ValidateTextLikeFile(string path, SupportedFormatDescriptor format, ConversionExecutionMode executionMode)
     {
         try
         {
@@ -95,11 +101,13 @@ public static class InputFormatValidator
             using var reader = new StreamReader(stream, StrictUtf8, detectEncodingFromByteOrderMarks: true, bufferSize: 64 * 1024);
             var sampleBuilder = new StringBuilder(capacity: 8 * 1024);
             var buffer = new char[64 * 1024];
+            var fullValidation = executionMode == ConversionExecutionMode.Development;
             int read;
             while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
             {
                 if (sampleBuilder.Length < 1_048_576)
                     sampleBuilder.Append(buffer, 0, Math.Min(read, 1_048_576 - sampleBuilder.Length));
+                if (!fullValidation && sampleBuilder.Length >= 1_048_576) break;
             }
 
             var sample = sampleBuilder.ToString();
@@ -108,9 +116,9 @@ public static class InputFormatValidator
             if (format.Category == ConversionFormatCategory.Html && !LooksLikeHtml(sample))
                 throw new ConversionFormatException("signature_mismatch", "The file is declared as HTML but contains no recognizable HTML markup.");
         }
-        catch (DecoderFallbackException exception)
+        catch (DecoderFallbackException)
         {
-            throw new ConversionFormatException("invalid_text_encoding", $"The text input is not valid UTF-8 or UTF-16: {exception.Message}");
+            throw new ConversionFormatException("invalid_text_encoding", "The text input is not valid UTF-8 or UTF-16.");
         }
     }
 
@@ -149,9 +157,9 @@ public static class InputFormatValidator
         {
             throw;
         }
-        catch (InvalidDataException exception)
+        catch (InvalidDataException)
         {
-            throw new ConversionFormatException("invalid_package", $"The '{format.Extension}' package is not a valid ZIP container: {exception.Message}");
+            throw new ConversionFormatException("invalid_package", $"The '{format.Extension}' package is not a valid ZIP container.");
         }
     }
 

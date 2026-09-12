@@ -20,7 +20,30 @@ $worker = Join-Path $OutputPath 'InactivePDF.ConversionWorker.exe'
 $api = Join-Path $OutputPath 'InactivePDF.Api.exe'
 if (-not (Test-Path $api)) { throw "The API executable was not published: $api" }
 if (-not (Test-Path $worker)) { throw "The conversion worker executable was not published: $worker" }
+$requiredAssets = @(
+    'InactivePDF.settings.json',
+    'wwwroot\index.html',
+    'wwwroot\console.js',
+    'wwwroot\console.css',
+    'wwwroot\openapi.json',
+    'wwwroot\api-reference.html'
+)
+foreach ($asset in $requiredAssets) {
+    $assetPath = Join-Path $OutputPath $asset
+    if (-not (Test-Path -LiteralPath $assetPath)) { throw "The published deployment is missing $assetPath" }
+}
+
+$requiredRuntimeFiles = @(
+    'InactivePDF.Api.deps.json',
+    'InactivePDF.Api.runtimeconfig.json',
+    'InactivePDF.ConversionWorker.deps.json',
+    'InactivePDF.ConversionWorker.runtimeconfig.json'
+)
+foreach ($runtimeFile in $requiredRuntimeFiles) {
+    $runtimePath = Join-Path $OutputPath $runtimeFile
+    if (-not (Test-Path -LiteralPath $runtimePath)) { throw "The published deployment is missing $runtimePath" }
+}
 
 Write-Host "Published API: $api"
 Write-Host "Published worker: $worker"
-Write-Host "Set INACTIVEPDF_CONVERSION_WORKER_PATH=$worker when installing the service."
+Write-Host "LibreOffice remains an external dependency. Run .\tools\setup-windows.ps1 -InstallPath '$OutputPath' after installing LibreOffice."

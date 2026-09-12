@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using InactivePDF.Infrastructure.Processes;
 
 namespace InactivePDF.Infrastructure.Configuration;
 
@@ -81,6 +82,7 @@ public sealed class InactivePdfSettings
     private static void Apply(InactivePdfSettings settings)
     {
         ApplyValue("INACTIVEPDF_PERFORMANCE_PROFILE", settings.Performance.Profile);
+        ApplyValue("INACTIVEPDF_EXECUTION_MODE", settings.Performance.ExecutionMode);
         ApplyValue("INACTIVEPDF_SWARM_WORKERS", settings.Performance.MaximumParallelWorkers);
         ApplyValue("INACTIVEPDF_SWARM_MEMORY_BYTES", settings.Performance.MemoryBudgetBytes);
         ApplyValue("INACTIVEPDF_SWARM_PENDING", settings.Performance.MaximumPending);
@@ -150,6 +152,8 @@ public sealed class InactivePdfSettings
         ApplyValue("INACTIVEPDF_WATCH_RETENTION_DELETE_ORIGINAL_FILES", settings.WatchFolder.Retention.DeleteOriginalFiles);
         ApplyValue("INACTIVEPDF_WATCH_RETENTION_DELETE_ERROR_FILES", settings.WatchFolder.Retention.DeleteErrorFiles);
         ApplyValue("INACTIVEPDF_WATCH_RETENTION_DELETE_LOG_FILES", settings.WatchFolder.Retention.DeleteLogFiles);
+        ApplyValue("INACTIVEPDF_WATCH_PROFILE", settings.WatchFolder.Profile);
+        ApplyValue("INACTIVEPDF_WATCH_WATERMARK_PROFILE", settings.WatchFolder.WatermarkProfile);
 
         ApplyValue("INACTIVEPDF_LIBREOFFICE_TIMEOUT_SECONDS", settings.Paths.LibreOfficeTimeoutSeconds);
         ApplyValue("INACTIVEPDF_LIBREOFFICE_IDLE_TIMEOUT_SECONDS", settings.Paths.LibreOfficeIdleTimeoutSeconds);
@@ -192,6 +196,8 @@ public sealed class InactivePdfSettings
         var invalid = new List<string>();
         if (settings.Performance is null) throw new InvalidDataException("Performance must be an object.");
         if (string.IsNullOrWhiteSpace(settings.Performance.Profile) || settings.Performance.Profile.Length > 64) invalid.Add("Performance.Profile requires a name of 1–64 characters");
+        try { _ = ConversionExecutionModeParser.Parse(settings.Performance.ExecutionMode); }
+        catch (InvalidDataException) { invalid.Add("Performance.ExecutionMode must be either 'Development' or 'Production'"); }
         if (settings.Performance.MaximumParallelWorkers is < 1 or > 256) invalid.Add("Performance.MaximumParallelWorkers must be 1–256");
         if (settings.Performance.MaximumPending is < 1 or > 100000) invalid.Add("Performance.MaximumPending must be 1–100000");
         if (settings.Performance.AgingSeconds is < 1 or > 3600) invalid.Add("Performance.AgingSeconds must be 1–3600");
@@ -358,6 +364,7 @@ public sealed class WorkerSettings
 public sealed class PerformanceSettings
 {
     public string Profile { get; set; } = "Balanced";
+    public string ExecutionMode { get; set; } = "Production";
     public int MaximumParallelWorkers { get; set; } = 2;
     public long MemoryBudgetBytes { get; set; } = 2L * 1024 * 1024 * 1024;
     public int MaximumPending { get; set; } = 4096;
@@ -375,6 +382,8 @@ public sealed class ConcurrencySettings
 public sealed class WatchFolderSettings
 {
     public string? Root { get; set; }
+    public string Profile { get; set; } = "archive";
+    public string? WatermarkProfile { get; set; }
     public int MaximumConcurrentConversions { get; set; } = 2;
     public int MaximumHeavyConversions { get; set; } = 2;
     public int MaximumMarkupConversions { get; set; } = 1;

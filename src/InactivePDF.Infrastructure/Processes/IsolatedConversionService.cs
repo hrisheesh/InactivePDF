@@ -89,14 +89,14 @@ public sealed class IsolatedConversionService(
             var inputPath = Path.Combine(workspace.Workspace.InputPath, "body.txt");
             await File.WriteAllTextAsync(inputPath, text, cancellationToken).ConfigureAwait(false);
             var outputPath = Path.Combine(workspace.Workspace.OutputPath, "text.pdf");
-            await worker.ConvertAsync(
+            var metrics = await worker.ConvertAsync(
                 new ConversionWorkerRequest(
                     ConversionOperation.CreateTextPdf,
                     outputPath,
                     [new ConversionWorkerInput(inputPath, "body.txt", "text/plain")],
-                profile, watermark, watermarkProfile),
+                profile, watermark, watermarkProfile, ExecutionMode: ConversionExecutionModeParser.FromEnvironment()),
                 cancellationToken).ConfigureAwait(false);
-            return OpenOutput(workspace, outputPath, "text.pdf");
+            return OpenOutput(workspace, outputPath, "text.pdf", metrics);
         }
         catch
         {
@@ -130,8 +130,9 @@ public sealed class IsolatedConversionService(
             }
 
             var outputPath = Path.Combine(workspace.Workspace.OutputPath, "result.pdf");
-            await worker.ConvertAsync(new ConversionWorkerRequest(operation, outputPath, storedInputs, profile, watermark, watermarkProfile), cancellationToken).ConfigureAwait(false);
-            return OpenOutput(workspace, outputPath, downloadName);
+            var metrics = await worker.ConvertAsync(new ConversionWorkerRequest(operation, outputPath, storedInputs, profile, watermark, watermarkProfile,
+                ExecutionMode: ConversionExecutionModeParser.FromEnvironment()), cancellationToken).ConfigureAwait(false);
+            return OpenOutput(workspace, outputPath, downloadName, metrics);
         }
         catch
         {
@@ -140,14 +141,14 @@ public sealed class IsolatedConversionService(
         }
     }
 
-    private static IsolatedConversionOutput OpenOutput(JobWorkspaceLease workspace, string outputPath, string downloadName)
+    private static IsolatedConversionOutput OpenOutput(JobWorkspaceLease workspace, string outputPath, string downloadName, IsolatedWorkerMetrics metrics)
     {
         var fileInfo = new FileInfo(outputPath);
         if (!fileInfo.Exists || fileInfo.Length == 0)
             throw new InvalidOperationException($"The conversion worker produced no output at '{outputPath}'.");
 
         var stream = new FileStream(outputPath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        return new IsolatedConversionOutput(stream, fileInfo.Length, downloadName, workspace);
+        return new IsolatedConversionOutput(stream, fileInfo.Length, downloadName, workspace, metrics);
     }
 
     private static string DefaultProfile() =>

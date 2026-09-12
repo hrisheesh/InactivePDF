@@ -62,5 +62,47 @@ public sealed class ConversionAnalyticsTests : IDisposable
         Assert.Equal(400, json.RootElement.GetProperty("executionTiming").GetProperty("averageMs").GetDouble());
         Assert.Equal("mixed", json.RootElement.GetProperty("formats")[0].GetProperty("format").GetString());
     }
+
+    [Fact]
+    public void ComputesPerFormatByteSavingsFromSuccessfulConversionsOnly()
+    {
+        using var store = new ConversionTelemetryStore(Path.Combine(root, "analytics.db"));
+
+        RecordSuccessful(store, "small.docx", 100, 60);
+        RecordSuccessful(store, "larger.docx", 200, 260);
+        RecordSuccessful(store, "photo.png", 1000, 400);
+
+        var failed = Request("failed.pdf");
+        File.WriteAllBytes(failed.Inputs[0].Path, new byte[500]);
+        store.Complete(store.Begin(failed), 50, failed.OutputPath, new InvalidDataException("expected failure"));
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(store.Snapshot()));
+        var docx = json.RootElement.GetProperty("formats").EnumerateArray().Single(row => row.GetProperty("format").GetString() == "docx");
+        Assert.Equal(300, docx.GetProperty("inputBytes").GetInt64());
+        Assert.Equal(320, docx.GetProperty("outputBytes").GetInt64());
+        Assert.Equal(-20, docx.GetProperty("bytesSaved").GetInt64());
+        Assert.Equal(-6.666666666666667, docx.GetProperty("savingsPercent").GetDouble(), 10);
+
+        var png = json.RootElement.GetProperty("formats").EnumerateArray().Single(row => row.GetProperty("format").GetString() == "png");
+        Assert.Equal(1000, png.GetProperty("inputBytes").GetInt64());
+        Assert.Equal(400, png.GetProperty("outputBytes").GetInt64());
+        Assert.Equal(600, png.GetProperty("bytesSaved").GetInt64());
+        Assert.Equal(60, png.GetProperty("savingsPercent").GetDouble());
+
+        var pdf = json.RootElement.GetProperty("formats").EnumerateArray().Single(row => row.GetProperty("format").GetString() == "pdf");
+        Assert.Equal(0, pdf.GetProperty("inputBytes").GetInt64());
+        Assert.Equal(0, pdf.GetProperty("outputBytes").GetInt64());
+        Assert.Equal(0, pdf.GetProperty("bytesSaved").GetInt64());
+        Assert.Equal(JsonValueKind.Null, pdf.GetProperty("savingsPercent").ValueKind);
+    }
+
+    private void RecordSuccessful(ConversionTelemetryStore store, string name, int inputBytes, int outputBytes)
+    {
+        var request = Request(name);
+        File.WriteAllBytes(request.Inputs[0].Path, new byte[inputBytes]);
+        File.WriteAllBytes(request.OutputPath, new byte[outputBytes]);
+        store.Complete(store.Begin(request), 100, request.OutputPath, null);
+    }
+
     public void Dispose() => Directory.Delete(root, true);
 }

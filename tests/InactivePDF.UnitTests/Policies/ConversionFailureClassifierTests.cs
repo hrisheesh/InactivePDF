@@ -35,4 +35,15 @@ public sealed class ConversionFailureClassifierTests
         Assert.Equal("worker_execution_failed", retryable.Code);
         Assert.Equal("worker_execution_failed", permanent.Code);
     }
+
+    [Fact]
+    public void FailureMessagesNeverExposeEngineDiagnosticsOrPaths()
+    {
+        var result = ConversionFailureClassifier.Classify(new ConversionWorkerExecutionException(
+            "StandardError=secret engine diagnostic /Users/private/document.docx", true));
+
+        Assert.Equal("worker_execution_failed", result.Code);
+        Assert.DoesNotContain("secret engine diagnostic", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Users/private", result.Message, StringComparison.Ordinal);
+    }
 }

@@ -28,44 +28,64 @@ public static class ConversionWorkerRunner
         {
             InactivePdfSettings.LoadAndApply();
             var requestPath = Required(args, "--request");
-            var request = await ReadRequestAsync(requestPath).ConfigureAwait(false);
+            var configuredMode = ConversionExecutionModeParser.FromEnvironment();
+            var stages = configuredMode == ConversionExecutionMode.Development ? new ConversionStageRecorder() : null;
+            ConversionWorkerRequest request;
+            using (stages?.Measure("inputLoad"))
+                request = await ReadRequestAsync(requestPath).ConfigureAwait(false);
+            if (request.ExecutionMode != configuredMode)
+            {
+                stages = request.ExecutionMode == ConversionExecutionMode.Development ? new ConversionStageRecorder() : null;
+            }
             var converter = new CompatibilityConversionService(
                 new MagickToPdfConverter(ResourcePolicy.FromEnvironment()),
                 new PdfTextGenerator(),
-                new LibreOfficeConverter(LibreOfficeOptions.Default),
+                new LibreOfficeConverter(LibreOfficeOptions.Default, stages, request.ExecutionMode),
                 new PdfSharpOperations(),
                 ResourcePolicy.FromEnvironment(),
-                new RtfFastPathConverter(new PdfTextGenerator()));
-            await converter.ConvertRequestToFileAsync(request).ConfigureAwait(false);
-            var watermark = request.Watermark;
-            if (watermark is null && !string.IsNullOrWhiteSpace(request.WatermarkProfile))
+                new RtfFastPathConverter(new PdfTextGenerator()),
+                stages);
+            try
             {
-                var profilePath = Environment.GetEnvironmentVariable("INACTIVEPDF_WATERMARK_PROFILES_PATH");
-                if (!string.IsNullOrWhiteSpace(profilePath) && File.Exists(profilePath))
+                await converter.ConvertRequestToFileAsync(request).ConfigureAwait(false);
+                var watermark = request.Watermark;
+                if (watermark is null && !string.IsNullOrWhiteSpace(request.WatermarkProfile))
                 {
-                    await using var profileStream = File.OpenRead(profilePath);
-                    var profiles = await JsonSerializer.DeserializeAsync<Dictionary<string, WatermarkOptions>>(profileStream).ConfigureAwait(false);
-                    profiles?.TryGetValue(request.WatermarkProfile, out watermark);
+                    var profilePath = Environment.GetEnvironmentVariable("INACTIVEPDF_WATERMARK_PROFILES_PATH");
+                    if (!string.IsNullOrWhiteSpace(profilePath) && File.Exists(profilePath))
+                    {
+                        await using var profileStream = File.OpenRead(profilePath);
+                        var profiles = await JsonSerializer.DeserializeAsync<Dictionary<string, WatermarkOptions>>(profileStream).ConfigureAwait(false);
+                        profiles?.TryGetValue(request.WatermarkProfile, out watermark);
+                    }
+                }
+                if (watermark is not null)
+                {
+                    using (stages?.Measure("watermark"))
+                    {
+                        watermark = ResolveWatermarkAsset(watermark);
+                        var temporary = request.OutputPath + ".watermark.tmp";
+                        new PdfWatermarkService().Apply(request.OutputPath, temporary, watermark);
+                        File.Move(temporary, request.OutputPath, overwrite: true);
+                    }
                 }
             }
-            if (watermark is not null)
+            finally
             {
-                watermark = ResolveWatermarkAsset(watermark);
-                var temporary = request.OutputPath + ".watermark.tmp";
-                new PdfWatermarkService().Apply(request.OutputPath, temporary, watermark);
-                File.Move(temporary, request.OutputPath, overwrite: true);
+                if (stages is not null && !string.IsNullOrWhiteSpace(request.TelemetryPath))
+                    await TryWriteStageReportAsync(request.TelemetryPath, stages).ConfigureAwait(false);
             }
             return 0;
         }
         catch (ConversionFormatException exception)
         {
             Console.Error.WriteLine($"INACTIVEPDF_ERROR_CODE={exception.Code}");
-            Console.Error.WriteLine(exception);
+            Console.Error.WriteLine("INACTIVEPDF_ERROR=conversion_input_rejected");
             return 1;
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(exception);
+            Console.Error.WriteLine($"INACTIVEPDF_ERROR={exception.GetType().Name}");
             return 1;
         }
     }
@@ -78,9 +98,21 @@ public static class ConversionWorkerRunner
         return WatermarkAssetResolver.Resolve(options, assetRoot);
     }
 
+    private static async Task TryWriteStageReportAsync(string path, ConversionStageRecorder stages)
+    {
+        try
+        {
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(stages.Snapshot())).ConfigureAwait(false);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
     private static async Task<ConversionWorkerRequest> ReadRequestAsync(string path)
     {
-        await using var stream = new FileStream(Path.GetFullPath(path), FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
+        var fullPath = Path.GetFullPath(path);
+        WorkspacePathSecurity.EnsureSafeChain(fullPath, Path.GetDirectoryName(fullPath)!);
+        await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
         return await JsonSerializer.DeserializeAsync<ConversionWorkerRequest>(stream, JsonOptions).ConfigureAwait(false)
             ?? throw new InvalidDataException("The conversion worker request manifest was empty.");
     }

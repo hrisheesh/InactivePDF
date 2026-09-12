@@ -1,3 +1,5 @@
+using InactivePDF.Infrastructure.Processes;
+
 namespace InactivePDF.Infrastructure.Watch;
 
 public sealed record WatchFolderOptions(
@@ -13,7 +15,9 @@ public sealed record WatchFolderOptions(
     long ImageReservationBytes = 1_073_741_824,
     long MarkupReservationBytes = 268_435_456,
     long LargeFileReservationBytes = 67_108_864,
-    string? WatermarkProfile = null)
+    string? WatermarkProfile = null,
+    ConversionExecutionMode ExecutionMode = ConversionExecutionMode.Production,
+    string Profile = "archive")
 {
     public string InputPath => Path.Combine(RootPath, "Input");
     public string OutputPath => Path.Combine(RootPath, "Output");
@@ -40,7 +44,9 @@ public sealed record WatchFolderOptions(
             ParseBytes("INACTIVEPDF_WATCH_IMAGE_RESERVATION_BYTES", 1_073_741_824),
             ParseBytes("INACTIVEPDF_WATCH_MARKUP_RESERVATION_BYTES", 268_435_456),
             ParseBytes("INACTIVEPDF_WATCH_LARGE_FILE_RESERVATION_BYTES", 67_108_864),
-            Environment.GetEnvironmentVariable("INACTIVEPDF_WATCH_WATERMARK_PROFILE"));
+            Environment.GetEnvironmentVariable("INACTIVEPDF_WATCH_WATERMARK_PROFILE"),
+            ConversionExecutionModeParser.FromEnvironment(),
+            Environment.GetEnvironmentVariable("INACTIVEPDF_WATCH_PROFILE") ?? "archive");
     }
 
     private static int ParsePositive(string name, int fallback) => int.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value > 0 ? value : fallback;

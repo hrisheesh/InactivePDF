@@ -1,4 +1,5 @@
 using InactivePDF.Domain.Contracts;
+using InactivePDF.Infrastructure.Resources;
 
 namespace InactivePDF.Infrastructure.IO;
 
@@ -17,8 +18,11 @@ public sealed class AtomicFilePublisher(IBoundedStreamCopier copier) : IAtomicFi
         var directory = Path.GetDirectoryName(fullDestination)
             ?? throw new ArgumentException("The destination must include a directory.", nameof(destinationPath));
         Directory.CreateDirectory(directory);
+        WorkspacePathSecurity.EnsureSafeChain(directory, directory);
+        WorkspacePathSecurity.EnsureSafeChain(fullDestination, directory);
 
         var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(fullDestination)}.{Guid.NewGuid():N}.partial");
+        WorkspacePathSecurity.EnsureSafeChild(directory, temporaryPath);
         try
         {
             long bytes;
@@ -35,6 +39,7 @@ public sealed class AtomicFilePublisher(IBoundedStreamCopier copier) : IAtomicFi
                 temporary.Flush(flushToDisk: true);
             }
 
+            WorkspacePathSecurity.EnsureSafeChain(fullDestination, directory);
             File.Move(temporaryPath, fullDestination, overwrite: true);
             return bytes;
         }

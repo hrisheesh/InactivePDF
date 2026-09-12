@@ -1,6 +1,7 @@
 {
   "Performance": {
     "Profile": "Balanced",
+    "ExecutionMode": "Production",
     "MaximumParallelWorkers": 2,
     "MemoryBudgetBytes": 2147483648,
     "MaximumPending": 4096,
@@ -59,6 +60,8 @@
   },
   "WatchFolder": {
     "Root": null,
+    "Profile": "archive",
+    "WatermarkProfile": null,
     "MaximumConcurrentConversions": 2,
     "MaximumHeavyConversions": 2,
     "MaximumMarkupConversions": 1,
@@ -134,6 +137,9 @@
     }
   },
   "CurrentDefaultsReference": {
+    "Performance": {
+      "ExecutionMode": "Production"
+    },
     "Service": {
       "Urls": "ASP.NET framework default because no URL is explicitly configured",
       "ShutdownTimeoutSeconds": 30

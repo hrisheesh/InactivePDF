@@ -7,4 +7,5 @@ public interface IJobStatusStore
     Task<JobStatus?> GetAsync(Guid jobId, CancellationToken cancellationToken = default);
     Task<JobStatus?> FindByCorrelationIdAsync(string correlationId, CancellationToken cancellationToken = default);
     Task UpsertAsync(JobStatus status, CancellationToken cancellationToken = default);
+    Task<JobPage> ListAsync(JobQuery query, CancellationToken cancellationToken = default);
 }

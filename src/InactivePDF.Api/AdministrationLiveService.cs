@@ -12,7 +12,8 @@ namespace InactivePDF.Api;
 
 public sealed class AdministrationLiveService(
     HealthCheckService health, ConversionTelemetryStore telemetry, LiteDbJobStore jobs,
-    ConversionMetrics metrics, IConversionJobBuffer queue, WatchFolderOptions watch, AdministrationSettingsStore settings, WatermarkProfileStore profiles, SwarmScheduler swarm) : IDisposable
+    ConversionMetrics metrics, IConversionJobBuffer queue, WatchFolderOptions watch, AdministrationSettingsStore settings,
+    WatermarkProfileStore profiles, SwarmScheduler swarm, ApiKeyStore apiKeys, ApiUsageStore apiUsage, AuditEventStore audit) : IDisposable
 {
     private readonly SemaphoreSlim snapshotGate = new(1, 1);
     private DateTime lastSnapshot;
@@ -37,6 +38,7 @@ public sealed class AdministrationLiveService(
             var syncWaiting = swarm.Counts("Synchronous").Waiting;
             var waiting = source switch { "WatchFolder" => watchWaiting, "Queued" => apiWaiting, "Synchronous" => syncWaiting, _ => watchWaiting + apiWaiting + syncWaiting };
             using var process = Process.GetCurrentProcess();
+            var resource = ResourceSnapshot.Capture();
             cached = new
             {
                 sampledAt = DateTimeOffset.UtcNow,
@@ -49,10 +51,23 @@ public sealed class AdministrationLiveService(
                     authenticationEnabled = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("INACTIVEPDF_API_TOKEN")),
                     readiness = report.Status.ToString(), checks = report.Entries.Select(pair => new { name = pair.Key, status = pair.Value.Status.ToString(), description = pair.Value.Description })
                 },
+                resources = new
+                {
+                    capturedAt = resource.Utc,
+                    apiWorkingSetBytes = resource.WorkingSetBytes,
+                    apiPhysicalFootprintBytes = resource.PhysicalFootprintBytes,
+                    apiCpuMilliseconds = resource.CpuMilliseconds,
+                    apiThreadCount = resource.ThreadCount,
+                    libreOfficeProcessCount = resource.LibreOfficeProcessCount,
+                    libreOfficeWorkingSetBytes = resource.LibreOfficeWorkingSetBytes,
+                    libreOfficeCpuMilliseconds = resource.LibreOfficeCpuMilliseconds,
+                    libreOfficeThreadCount = resource.LibreOfficeThreadCount
+                },
                 metrics = new { metrics.Accepted, metrics.Succeeded, metrics.Failed, metrics.Retried, metrics.DeadLettered, queueDepth = waiting, queueCapacity = queue.Capacity,
                     dispatchBufferDepth = queue.Count, durableOutstanding, processing = swarm.Counts(source).Processing },
                 swarm = swarm.Snapshot(source), watchFolder = new { input, processing, errors, waiting = watchWaiting, active = watchActive, statusAvailable = input.HasValue && processing.HasValue && errors.HasValue },
-                settings = settings.Read(), profiles = profiles.List(), analytics = telemetry.Snapshot(24, source), jobs = jobs.ListRecent().Select(job => new { job.JobId, job.CorrelationId, job.Operation, job.State, job.AcceptedAt, job.UpdatedAt, job.Attempts, job.ErrorCode }),
+                apiUsage = apiUsage.SnapshotAll(apiKeys.List()), auditEvents = audit.Recent(40),
+                settings = settings.Read(), profiles = profiles.List(), analytics = telemetry.Snapshot(24, source), jobs = jobs.ListRecent().Select(JobApiResponses.ToPublic),
                 deadLetters = (await jobs.ListDeadLettersAsync(50, cancellationToken)).Select(row => new { row.JobId, row.ErrorCode }),
                 logs = ReadLogs("")
             };

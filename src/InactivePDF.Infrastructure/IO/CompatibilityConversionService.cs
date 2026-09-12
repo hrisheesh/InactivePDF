@@ -4,6 +4,7 @@ using InactivePDF.Application.Capabilities;
 using InactivePDF.Infrastructure.Processes;
 using InactivePDF.Infrastructure.Rendering;
 using InactivePDF.Infrastructure.Validation;
+using InactivePDF.Infrastructure.Resources;
 
 namespace InactivePDF.Infrastructure.IO;
 
@@ -17,7 +18,8 @@ public sealed class CompatibilityConversionService(
     IOfficeDocumentConverter officeConverter,
     IPdfOperations pdfOperations,
     ResourcePolicy resourcePolicy,
-    RtfFastPathConverter? rtfFastPathConverter = null)
+    RtfFastPathConverter? rtfFastPathConverter = null,
+    ConversionStageRecorder? stageRecorder = null)
 {
     public async Task ConvertRequestToFileAsync(
         ConversionWorkerRequest request,
@@ -26,6 +28,7 @@ public sealed class CompatibilityConversionService(
         ArgumentNullException.ThrowIfNull(request);
         ValidateRequest(request);
         var profile = PdfOutputProfileCatalog.Resolve(request.Profile);
+        var recorder = request.ExecutionMode == ConversionExecutionMode.Development ? stageRecorder : null;
 
         var output = Path.GetFullPath(request.OutputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -35,17 +38,25 @@ public sealed class CompatibilityConversionService(
 
         try
         {
-            await ConvertRequestToPathAsync(request, temporaryOutput, profile, cancellationToken).ConfigureAwait(false);
-            if (profile.StructuralValidation)
-                _ = pdfOperations.Inspect(temporaryOutput);
-            var outputLength = new FileInfo(temporaryOutput).Length;
+            using (recorder?.Measure("conversion"))
+                await ConvertRequestToPathAsync(request, temporaryOutput, profile, recorder, cancellationToken).ConfigureAwait(false);
+            if (profile.StructuralValidation || request.ExecutionMode == ConversionExecutionMode.Production)
+            {
+                using (recorder?.Measure("requiredValidation"))
+                    _ = pdfOperations.Inspect(temporaryOutput);
+            }
+            long outputLength;
+            using (recorder?.Measure("pdfWrite"))
+                outputLength = new FileInfo(temporaryOutput).Length;
             if (outputLength > resourcePolicy.MaximumOutputBytes)
                 throw new IOException($"The conversion output exceeds the maximum allowed size of {resourcePolicy.MaximumOutputBytes} bytes.");
-            PublishAtomically(temporaryOutput, output);
+            using (recorder?.Measure("publish"))
+                PublishAtomically(temporaryOutput, output);
         }
         finally
         {
-            TryDelete(temporaryOutput);
+            using (recorder?.Measure("cleanup"))
+                TryDelete(temporaryOutput);
         }
     }
 
@@ -53,19 +64,22 @@ public sealed class CompatibilityConversionService(
         ConversionWorkerRequest request,
         string outputPath,
         PdfOutputProfile profile,
+        ConversionStageRecorder? recorder,
         CancellationToken cancellationToken)
     {
         if (request.Operation == ConversionOperation.CreateTextPdf)
         {
             var textInput = request.Inputs[0];
-            var text = await File.ReadAllTextAsync(textInput.Path, cancellationToken).ConfigureAwait(false);
+            string text;
+            using (recorder?.Measure("inputLoad"))
+                text = await File.ReadAllTextAsync(textInput.Path, cancellationToken).ConfigureAwait(false);
             textGenerator.Create(text, outputPath, new TextPdfOptions(OutputProfile: profile));
             return;
         }
 
         if (request.Operation == ConversionOperation.ConvertFile)
         {
-            await ConvertPathAsync(request.Inputs[0].Path, request.Inputs[0].FileName, request.Inputs[0].ContentType, outputPath, profile, cancellationToken).ConfigureAwait(false);
+            await ConvertPathAsync(request.Inputs[0].Path, request.Inputs[0].FileName, request.Inputs[0].ContentType, outputPath, profile, request.ExecutionMode, recorder, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -78,7 +92,7 @@ public sealed class CompatibilityConversionService(
                 var converted = Path.Combine(
                     Path.GetDirectoryName(outputPath)!,
                     $".{Path.GetFileNameWithoutExtension(outputPath)}-{index:D4}-{Guid.NewGuid():N}.part.pdf");
-                await ConvertPathAsync(input.Path, input.FileName, input.ContentType, converted, profile, cancellationToken).ConfigureAwait(false);
+                await ConvertPathAsync(input.Path, input.FileName, input.ContentType, converted, profile, request.ExecutionMode, recorder, cancellationToken).ConfigureAwait(false);
                 convertedPaths.Add(converted);
             }
 
@@ -96,12 +110,17 @@ public sealed class CompatibilityConversionService(
         string contentType,
         string output,
         PdfOutputProfile profile,
+        ConversionExecutionMode executionMode,
+        ConversionStageRecorder? recorder,
         CancellationToken cancellationToken)
     {
-        var validation = InputFormatValidator.Validate(source, fileName, contentType);
+        InputFormatValidation validation;
+        using (recorder?.Measure("inputLoad"))
+        validation = InputFormatValidator.Validate(source, fileName, contentType, executionMode);
         if (validation.Format.Route == ConversionFormatRoute.PdfPassThrough)
         {
-            _ = pdfOperations.Inspect(source);
+            if (executionMode == ConversionExecutionMode.Development)
+                _ = pdfOperations.Inspect(source);
             File.Copy(source, output, overwrite: true);
             if (!profile.Name.Equals("archive", StringComparison.OrdinalIgnoreCase))
                 pdfOperations.ApplyProfile(output, profile);
@@ -136,9 +155,11 @@ public sealed class CompatibilityConversionService(
 
         foreach (var input in request.Inputs)
         {
+            WorkspacePathSecurity.EnsureSafeChain(Path.GetFullPath(input.Path), Path.GetDirectoryName(Path.GetFullPath(input.Path))!);
             if (!File.Exists(input.Path)) throw new FileNotFoundException("The worker input does not exist.", input.Path);
             if (string.IsNullOrWhiteSpace(input.FileName)) throw new ArgumentException("A worker input filename is required.", nameof(request));
         }
+        WorkspacePathSecurity.EnsureSafeChain(Path.GetFullPath(request.OutputPath), Path.GetDirectoryName(Path.GetFullPath(request.OutputPath))!);
     }
 
     private static void PublishAtomically(string temporaryPath, string outputPath)

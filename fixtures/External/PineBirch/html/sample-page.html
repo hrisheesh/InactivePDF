@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sample Business Document — Pine & Birch</title>
+<style>body{font-family:system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;line-height:1.6;color:#1a202c}h1{color:#071e93}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6px 8px;text-align:left}th{background:#071e93;color:#fff}</style>
+</head>
+<body>
+<h1>Sample Business Document</h1>
+<p>Published by <a href="https://www.pine-and-birch.com/sample-files">Pine & Birch</a>.</p>
+<h2>Section 1</h2>
+<p>This is a sample document published by Pine & Birch, a technology consulting firm in Toronto. It exists so that developers, QA testers, and product teams have a realistic file to use when testing uploads, previews, conversions, and integrations. Everything in it is fictional and free to use for any purpose.</p>
+<h2>Section 2</h2>
+<p>A good test document mixes the structures real users produce: headings at several levels, ordinary paragraphs, bulleted and numbered lists, a data table, an embedded image, and page breaks. Parsers and previewers that handle this file cleanly will handle most documents your customers upload.</p>
+<h2>Section 3</h2>
+<p>The table below shows fictional quarterly figures for a small distribution company. Values are deterministic, so the same file downloaded twice is byte-for-byte identical, which makes it safe to use as a fixture in automated tests and checksums.</p>
+<h2>Section 4</h2>
+<p>When testing a document-processing pipeline, check the details that break silently: non-ASCII characters such as café, naïve, and Zürich; smart quotes like “this” and ‘that’; currency symbols (€, £, ¥); and long words that force line wrapping in narrow columns.</p>
+<h2>Section 5</h2>
+<p>Accessibility matters even in test data. This document uses real heading styles rather than bold text, so screen readers and converters can build a proper outline from it. The image includes alternative text, and the table has a header row.</p>
+<h2>Section 6</h2>
+<p>Nothing here should be treated as a template for legal, financial, or medical documents. It is a fixture — a stable, known input that lets you verify that the rest of your system behaves correctly.</p>
+<h3>Key points</h3>
+<ul>
+<li>Realistic structure: headings, lists, tables, and images</li>
+<li>Deterministic content — identical on every download</li>
+<li>Unicode, smart quotes, and currency symbols included</li>
+<li>No macros, no scripts, no tracking of any kind</li>
+<li>Free for any use, no attribution required</li>
+</ul>
+<table>
+<thead><tr><th>Order ID</th><th>Customer</th><th>Region</th><th>Total</th></tr></thead>
+<tbody>
+<tr><td>PB-100001</td><td>Prairie Wind Farms</td><td>Alberta</td><td>$21,600.00</td></tr>
+<tr><td>PB-100002</td><td>Harbourfront Textiles</td><td>Quebec</td><td>$26,400.00</td></tr>
+<tr><td>PB-100003</td><td>Silverline Freight</td><td>Ontario</td><td>$556.50</td></tr>
+<tr><td>PB-100004</td><td>Birchwood Interiors</td><td>British Columbia</td><td>$792.00</td></tr>
+<tr><td>PB-100005</td><td>Northwind Logistics</td><td>Ontario</td><td>$10,800.00</td></tr>
+<tr><td>PB-100006</td><td>Prairie Wind Farms</td><td>Illinois</td><td>$3,200.00</td></tr>
+<tr><td>PB-100007</td><td>Kingston Print Works</td><td>New York</td><td>$2,880.00</td></tr>
+<tr><td>PB-100008</td><td>Prairie Wind Farms</td><td>New York</td><td>$13,200.00</td></tr>
+</tbody>
+</table>
+<form><label>Name <input name="name"></label> <button type="submit">Submit</button></form>
+</body>
+</html>

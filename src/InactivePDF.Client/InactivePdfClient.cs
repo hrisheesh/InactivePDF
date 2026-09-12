@@ -38,12 +38,16 @@ public sealed class InactivePdfFile
 public enum InactivePdfJobState
 {
     Accepted,
-    Running,
+    Processing,
+    Running = Processing,
     Succeeded,
     Failed,
     Cancelled,
     Retrying,
-    DeadLettered
+    DeadLettered,
+    Queued,
+    WaitingForResources,
+    Interrupted
 }
 
 public enum InactivePdfOperation
@@ -52,6 +56,38 @@ public enum InactivePdfOperation
     ConvertFiles,
     ConvertAndMerge,
     CreateTextPdf
+}
+
+public enum InactivePdfConversionMode
+{
+    Async,
+    Sync
+}
+
+public sealed class InactivePdfConversionRequest
+{
+    public InactivePdfConversionRequest() { }
+
+    public InactivePdfConversionRequest(Stream content, string fileName, string? contentType = null)
+    {
+        Files.Add(new InactivePdfFile(content, fileName, contentType));
+    }
+
+    public InactivePdfConversionMode Mode { get; set; } = InactivePdfConversionMode.Async;
+    public IList<InactivePdfFile> Files { get; } = new List<InactivePdfFile>();
+    public string Profile { get; set; } = "archive";
+    public string? WatermarkProfile { get; set; }
+    public string? WatermarkJson { get; set; }
+    public string? IdempotencyKey { get; set; }
+    public string? RequestId { get; set; }
+}
+
+public sealed class InactivePdfConversionResult
+{
+    public bool IsSynchronous { get; internal set; }
+    public byte[]? Pdf { get; internal set; }
+    public InactivePdfJobStatus? Job { get; internal set; }
+    public Uri? Location { get; internal set; }
 }
 
 public sealed class InactivePdfJobRequest
@@ -104,6 +140,25 @@ public sealed class InactivePdfProfileDescriptor
     public bool StructuralValidation { get; set; }
 }
 
+public sealed class InactivePdfProfileCatalog
+{
+    public IReadOnlyList<InactivePdfProfileDescriptor> PdfOutput { get; set; } = Array.Empty<InactivePdfProfileDescriptor>();
+    public IReadOnlyList<InactivePdfWatermarkProfileDescriptor> Watermark { get; set; } = Array.Empty<InactivePdfWatermarkProfileDescriptor>();
+}
+
+public sealed class InactivePdfWatermarkProfileDescriptor
+{
+    public string Name { get; set; } = string.Empty;
+    public JsonElement Options { get; set; }
+}
+
+public sealed class InactivePdfProfileLookup
+{
+    public string Name { get; set; } = string.Empty;
+    public InactivePdfProfileDescriptor? PdfOutput { get; set; }
+    public InactivePdfWatermarkProfileDescriptor? Watermark { get; set; }
+}
+
 public sealed class InactivePdfJobStatus
 {
     public Guid JobId { get; set; }
@@ -116,8 +171,38 @@ public sealed class InactivePdfJobStatus
     public string? OutputPath { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
-    public bool IsComplete => State is InactivePdfJobState.Succeeded or InactivePdfJobState.Failed or InactivePdfJobState.Cancelled or InactivePdfJobState.DeadLettered;
+    public string Source { get; set; } = "API";
+    public string? Format { get; set; }
+    public string Profile { get; set; } = "archive";
+    public string? WatermarkProfile { get; set; }
+    public int ProgressPercent { get; set; }
+    public string? CurrentWorker { get; set; }
+    public string? CurrentLane { get; set; }
+    public long QueueWaitMilliseconds { get; set; }
+    public long ProcessingMilliseconds { get; set; }
+    public long InputBytes { get; set; }
+    public long OutputBytes { get; set; }
+    public double? CompressionPercent { get; set; }
+    public int RetryCount { get; set; }
+    public bool IsComplete => State is InactivePdfJobState.Succeeded or InactivePdfJobState.Failed or InactivePdfJobState.Cancelled or InactivePdfJobState.DeadLettered or InactivePdfJobState.Interrupted;
     public bool IsSuccessful => State == InactivePdfJobState.Succeeded;
+}
+
+public sealed class InactivePdfJobQuery
+{
+    public InactivePdfJobState? State { get; set; }
+    public string? Source { get; set; }
+    public string? Format { get; set; }
+    public DateTimeOffset? CreatedAfter { get; set; }
+    public DateTimeOffset? CreatedBefore { get; set; }
+    public string? Cursor { get; set; }
+    public int Limit { get; set; } = 50;
+}
+
+public sealed class InactivePdfJobPage
+{
+    public IReadOnlyList<InactivePdfJobStatus> Items { get; set; } = Array.Empty<InactivePdfJobStatus>();
+    public string? NextCursor { get; set; }
 }
 
 public sealed class InactivePdfQueueStatus
@@ -200,6 +285,22 @@ public sealed class InactivePdfClient : IDisposable
         return await DeserializeAsync<InactivePdfCapabilities>(response).ConfigureAwait(false);
     }
 
+    public async Task<InactivePdfProfileCatalog> GetProfilesAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await SendWithRetryAsync(() => new HttpRequestMessage(HttpMethod.Get, "v1/profiles"), cancellationToken).ConfigureAwait(false);
+        await EnsureSuccessAsync(response).ConfigureAwait(false);
+        return await DeserializeAsync<InactivePdfProfileCatalog>(response).ConfigureAwait(false);
+    }
+
+    public async Task<InactivePdfProfileLookup?> GetProfileAsync(string name, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A profile name is required.", nameof(name));
+        using var response = await SendWithRetryAsync(() => new HttpRequestMessage(HttpMethod.Get, $"v1/profiles/{Uri.EscapeDataString(name)}"), cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(response).ConfigureAwait(false);
+        return await DeserializeAsync<InactivePdfProfileLookup>(response).ConfigureAwait(false);
+    }
+
     public Task<byte[]> ConvertFileAsync(Stream content, string fileName, string? contentType = null, CancellationToken cancellationToken = default) =>
         DownloadBytesAsync(() => CreateMultipartRequest("v1/convert-file", new[] { new InactivePdfFile(content, fileName, contentType) }), cancellationToken);
 
@@ -253,12 +354,72 @@ public sealed class InactivePdfClient : IDisposable
         return await DeserializeAsync<InactivePdfJobStatus>(response).ConfigureAwait(false);
     }
 
+    public async Task<InactivePdfConversionResult> ConvertAsync(InactivePdfConversionRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        if (request.Files.Count == 0) throw new ArgumentException("At least one input file is required.", nameof(request));
+        using var response = await SendWithRetryAsync(() => CreateConversionRequest(request), cancellationToken).ConfigureAwait(false);
+        await EnsureSuccessAsync(response).ConfigureAwait(false);
+        var result = new InactivePdfConversionResult
+        {
+            IsSynchronous = request.Mode == InactivePdfConversionMode.Sync,
+            Location = response.Headers.Location is { } location
+                ? new Uri(_httpClient.BaseAddress ?? new Uri("http://localhost/"), location)
+                : null
+        };
+        if (result.IsSynchronous)
+        {
+            result.Pdf = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            return result;
+        }
+
+        result.Job = await DeserializeAsync<InactivePdfJobStatus>(response).ConfigureAwait(false);
+        return result;
+    }
+
     public async Task<InactivePdfJobStatus?> GetJobStatusAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         using var response = await SendWithRetryAsync(() => new HttpRequestMessage(HttpMethod.Get, $"v1/jobs/{jobId:D}"), cancellationToken).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         await EnsureSuccessAsync(response).ConfigureAwait(false);
         return await DeserializeAsync<InactivePdfJobStatus>(response).ConfigureAwait(false);
+    }
+
+    public async Task<InactivePdfJobPage> GetJobsAsync(InactivePdfJobQuery? query = null, CancellationToken cancellationToken = default)
+    {
+        query ??= new InactivePdfJobQuery();
+        if (query.Limit is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(query), "Limit must be between 1 and 100.");
+        var parameters = new List<string>();
+        if (query.State is { } state) parameters.Add($"state={Uri.EscapeDataString(state.ToString())}");
+        if (!string.IsNullOrWhiteSpace(query.Source)) parameters.Add($"source={Uri.EscapeDataString(query.Source)}");
+        if (!string.IsNullOrWhiteSpace(query.Format)) parameters.Add($"format={Uri.EscapeDataString(query.Format)}");
+        if (query.CreatedAfter is { } after) parameters.Add($"createdAfter={Uri.EscapeDataString(after.ToString("O"))}");
+        if (query.CreatedBefore is { } before) parameters.Add($"createdBefore={Uri.EscapeDataString(before.ToString("O"))}");
+        if (!string.IsNullOrWhiteSpace(query.Cursor)) parameters.Add($"cursor={Uri.EscapeDataString(query.Cursor)}");
+        parameters.Add($"limit={query.Limit}");
+        using var response = await SendWithRetryAsync(() => new HttpRequestMessage(HttpMethod.Get, "v1/jobs?" + string.Join("&", parameters)), cancellationToken).ConfigureAwait(false);
+        await EnsureSuccessAsync(response).ConfigureAwait(false);
+        return await DeserializeAsync<InactivePdfJobPage>(response).ConfigureAwait(false);
+    }
+
+    public async Task<InactivePdfJobStatus> CancelJobAsync(Guid jobId, CancellationToken cancellationToken = default)
+    {
+        using var response = await SendWithRetryAsync(() => new HttpRequestMessage(HttpMethod.Post, $"v1/jobs/{jobId:D}/cancel"), cancellationToken).ConfigureAwait(false);
+        await EnsureSuccessAsync(response).ConfigureAwait(false);
+        return await DeserializeAsync<InactivePdfJobStatus>(response).ConfigureAwait(false);
+    }
+
+    public async Task<InactivePdfJobStatus> RetryJobAsync(Guid jobId, CancellationToken cancellationToken = default)
+    {
+        using var response = await SendWithRetryAsync(() => new HttpRequestMessage(HttpMethod.Post, $"v1/jobs/{jobId:D}/retry"), cancellationToken).ConfigureAwait(false);
+        await EnsureSuccessAsync(response).ConfigureAwait(false);
+        return await DeserializeAsync<InactivePdfJobStatus>(response).ConfigureAwait(false);
+    }
+
+    public async Task DeleteJobAsync(Guid jobId, CancellationToken cancellationToken = default)
+    {
+        using var response = await SendWithRetryAsync(() => new HttpRequestMessage(HttpMethod.Delete, $"v1/jobs/{jobId:D}"), cancellationToken).ConfigureAwait(false);
+        await EnsureSuccessAsync(response).ConfigureAwait(false);
     }
 
     public async Task<InactivePdfJobStatus> WaitForCompletionAsync(
@@ -406,6 +567,26 @@ public sealed class InactivePdfClient : IDisposable
 
         var result = new HttpRequestMessage(HttpMethod.Post, "v1/jobs") { Content = multipart };
         if (!string.IsNullOrWhiteSpace(request.CorrelationId)) result.Headers.TryAddWithoutValidation("Idempotency-Key", request.CorrelationId);
+        return result;
+    }
+
+    private static HttpRequestMessage CreateConversionRequest(InactivePdfConversionRequest request)
+    {
+        var multipart = new MultipartFormDataContent();
+        multipart.Add(new StringContent(request.Mode == InactivePdfConversionMode.Sync ? "sync" : "async"), "mode");
+        multipart.Add(new StringContent(request.Profile ?? "archive"), "profile");
+        if (!string.IsNullOrWhiteSpace(request.WatermarkProfile)) multipart.Add(new StringContent(request.WatermarkProfile), "watermarkProfile");
+        if (!string.IsNullOrWhiteSpace(request.WatermarkJson)) multipart.Add(new StringContent(request.WatermarkJson, Encoding.UTF8), "watermark");
+        foreach (var file in request.Files)
+        {
+            var content = new StreamContent(new NonDisposingStream(file.Content));
+            content.Headers.ContentType = MediaTypeHeaderValue.Parse(file.ContentType);
+            multipart.Add(content, "file", file.FileName);
+        }
+
+        var result = new HttpRequestMessage(HttpMethod.Post, "v1/conversions") { Content = multipart };
+        if (!string.IsNullOrWhiteSpace(request.IdempotencyKey)) result.Headers.TryAddWithoutValidation("Idempotency-Key", request.IdempotencyKey);
+        if (!string.IsNullOrWhiteSpace(request.RequestId)) result.Headers.TryAddWithoutValidation("X-Request-Id", request.RequestId);
         return result;
     }
 

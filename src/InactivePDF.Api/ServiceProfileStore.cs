@@ -23,12 +23,20 @@ public sealed class ServiceProfileStore(WorkspaceOptions workspace)
         {
             if (!Directory.Exists(Root)) return [];
             WorkspacePathSecurity.EnsureSafeChain(Root, Root);
-            return Directory.EnumerateFiles(Root, "*.json").Select(Path.GetFileNameWithoutExtension).OfType<string>().Order(StringComparer.Ordinal).ToArray();
+            return Directory.EnumerateFiles(Root, "*.json").Select(path =>
+            {
+                var safePath = WorkspacePathSecurity.EnsureSafeChild(Root, path);
+                return Path.GetFileNameWithoutExtension(safePath);
+            }).OfType<string>().Order(StringComparer.Ordinal).ToArray();
         }
     }
     public JsonObject? Read(string name)
     {
-        lock (gate) { var path = Resolve(name); return File.Exists(path) ? JsonNode.Parse(File.ReadAllText(path))!.AsObject() : null; }
+        lock (gate)
+        {
+            var path = Resolve(name);
+            return File.Exists(path) ? JsonNode.Parse(File.ReadAllText(path))!.AsObject() : null;
+        }
     }
     public void Save(string name, JsonObject settings)
     {
@@ -39,19 +47,34 @@ public sealed class ServiceProfileStore(WorkspaceOptions workspace)
         lock (gate)
         {
             var path = Resolve(name);
+            WorkspacePathSecurity.EnsureSafeChain(path, Root);
             var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
                 using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 { JsonSerializer.Serialize(stream, typed); stream.Flush(true); }
-                File.Move(temporary, path, true);
+                WorkspacePathSecurity.EnsureSafeChain(path, Root);
+                if (File.Exists(path) && File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+                    throw new UnauthorizedAccessException("The service profile cannot be a symbolic link or reparse point.");
+                try { File.Replace(temporary, path, destinationBackupFileName: null, ignoreMetadataErrors: true); }
+                catch (PlatformNotSupportedException) { File.Move(temporary, path, true); }
+                catch (IOException) { File.Move(temporary, path, true); }
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
     }
     public bool Delete(string name)
     {
-        lock (gate) { var path = Resolve(name); if (!File.Exists(path)) return false; File.Delete(path); return true; }
+        lock (gate)
+        {
+            var path = Resolve(name);
+            if (!File.Exists(path)) return false;
+            WorkspacePathSecurity.EnsureSafeChain(path, Root);
+            if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+                throw new UnauthorizedAccessException("The service profile cannot be a symbolic link or reparse point.");
+            File.Delete(path);
+            return true;
+        }
     }
 
     public static object Presets()

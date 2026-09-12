@@ -31,7 +31,7 @@ public sealed class IsolatedImageToPdfConverter(IsolatedConversionWorker worker)
                         ConversionOperation.ConvertFile,
                         destination,
                         [new ConversionWorkerInput(input, Path.GetFileName(input), "application/octet-stream")],
-                        resolvedProfile.Name))
+                        resolvedProfile.Name, ExecutionMode: ConversionExecutionModeParser.FromEnvironment()))
                     .GetAwaiter()
                     .GetResult();
                 if (inputPaths.Count > 1) temporaryOutputs.Add(destination);

@@ -5,4 +5,5 @@ public sealed record ConversionJob(
     string CorrelationId,
     ConversionOperation Operation,
     ConversionJobState State,
-    DateTimeOffset AcceptedAt);
+    DateTimeOffset AcceptedAt,
+    Guid? OwnerApiKeyId = null);
