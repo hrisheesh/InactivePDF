@@ -10,6 +10,7 @@ namespace InactivePDF.Infrastructure.Processes;
 internal sealed class WindowsJobObject : IDisposable
 {
     private const uint JobObjectExtendedLimitInformation = 9;
+    private const uint JobObjectBasicAccountingInformation = 1;
     private const uint JobObjectLimitJobMemory = 0x00000200;
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
     private IntPtr _handle;
@@ -53,6 +54,18 @@ internal sealed class WindowsJobObject : IDisposable
         }
     }
 
+    public long TotalCpuMilliseconds
+    {
+        get
+        {
+            if (_handle == IntPtr.Zero) return 0;
+            var accounting = new BasicAccountingInformation();
+            return QueryBasicInformationJobObject(_handle, JobObjectBasicAccountingInformation, ref accounting, (uint)Marshal.SizeOf<BasicAccountingInformation>(), out _)
+                ? checked((accounting.TotalUserTime + accounting.TotalKernelTime) / TimeSpan.TicksPerMillisecond)
+                : 0;
+        }
+    }
+
     public void Dispose()
     {
         var handle = Interlocked.Exchange(ref _handle, IntPtr.Zero);
@@ -70,6 +83,9 @@ internal sealed class WindowsJobObject : IDisposable
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool QueryInformationJobObject(IntPtr job, uint informationClass, ref ExtendedLimitInformation information, uint length, out uint returnLength);
+
+    [DllImport("kernel32.dll", EntryPoint = "QueryInformationJobObject", SetLastError = true)]
+    private static extern bool QueryBasicInformationJobObject(IntPtr job, uint informationClass, ref BasicAccountingInformation information, uint length, out uint returnLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
@@ -97,6 +113,18 @@ internal sealed class WindowsJobObject : IDisposable
         public ulong ReadTransferCount;
         public ulong WriteTransferCount;
         public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BasicAccountingInformation
+    {
+        public long TotalUserTime;
+        public long TotalKernelTime;
+        public long ThisPeriodTotalUserTime;
+        public uint TotalPageFaultCount;
+        public uint TotalProcesses;
+        public uint ActiveProcesses;
+        public uint TotalTerminatedProcesses;
     }
 
     [StructLayout(LayoutKind.Sequential)]

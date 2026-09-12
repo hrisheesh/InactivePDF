@@ -20,7 +20,6 @@ public sealed class WatchFolderWorker(
     IsolatedConversionWorker converter,
     IDiskSpaceGuard diskSpaceGuard,
     ResourcePolicy resourcePolicy,
-    LibreOfficeSessionHost officeSession,
     ILogger<WatchFolderWorker> logger,
     LiteDbJobStore jobs,
     WatermarkProfileStore watermarkProfiles) : BackgroundService
@@ -137,16 +136,12 @@ public sealed class WatchFolderWorker(
         diskSpaceGuard.EnsureAvailable(options.RootPath, resourcePolicy.MinimumFreeDiskBytes);
         SemaphoreSlim? acquiredMarkupGate = null;
         ResourceAdmissionLease? acquiredResourceLease = null;
-        IAsyncDisposable? officeLease = null;
         var gateWaitMs = 0L;
         IsolatedWorkerMetrics? workerMetrics = null;
         var diagnosticsEnabled = options.ExecutionMode == ConversionExecutionMode.Development;
         var configuredWatermark = ResolveConfiguredWatermark();
         try
         {
-            if (RequiresLibreOffice(fileName))
-                officeLease = await officeSession.AcquireAsync(cancellationToken).ConfigureAwait(false);
-
             var reservationBytes = SelectResourceReservation(fileName, inputBytes);
             if (reservationBytes > 0)
             {
@@ -230,7 +225,6 @@ public sealed class WatchFolderWorker(
         {
             acquiredMarkupGate?.Release();
             if (acquiredResourceLease is not null) await acquiredResourceLease.DisposeAsync().ConfigureAwait(false);
-            if (officeLease is not null) await officeLease.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -264,9 +258,6 @@ public sealed class WatchFolderWorker(
     }
 
     private static bool IsImage(string path) => SupportedFormatCatalog.IsImage(Path.GetExtension(path));
-
-    private static bool RequiresLibreOffice(string path) =>
-        SupportedFormatCatalog.TryGet(Path.GetExtension(path), out var format) && format.Route == ConversionFormatRoute.LibreOffice;
 
     private long SelectResourceReservation(string path, long inputBytes)
     {

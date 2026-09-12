@@ -7,13 +7,14 @@ using InactivePDF.Infrastructure.Jobs;
 using InactivePDF.Infrastructure.Watch;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using InactivePDF.Infrastructure.Resources;
+using InactivePDF.Infrastructure.Processes;
 
 namespace InactivePDF.Api;
 
 public sealed class AdministrationLiveService(
     HealthCheckService health, ConversionTelemetryStore telemetry, LiteDbJobStore jobs,
     ConversionMetrics metrics, IConversionJobBuffer queue, WatchFolderOptions watch, AdministrationSettingsStore settings,
-    WatermarkProfileStore profiles, SwarmScheduler swarm, ApiKeyStore apiKeys, ApiUsageStore apiUsage, AuditEventStore audit) : IDisposable
+    WatermarkProfileStore profiles, SwarmScheduler swarm, LibreOfficeSessionHost officeSessions, ApiKeyStore apiKeys, ApiUsageStore apiUsage, AuditEventStore audit) : IDisposable
 {
     private readonly SemaphoreSlim snapshotGate = new(1, 1);
     private DateTime lastSnapshot;
@@ -65,7 +66,7 @@ public sealed class AdministrationLiveService(
                 },
                 metrics = new { metrics.Accepted, metrics.Succeeded, metrics.Failed, metrics.Retried, metrics.DeadLettered, queueDepth = waiting, queueCapacity = queue.Capacity,
                     dispatchBufferDepth = queue.Count, durableOutstanding, processing = swarm.Counts(source).Processing },
-                swarm = swarm.Snapshot(source), watchFolder = new { input, processing, errors, waiting = watchWaiting, active = watchActive, statusAvailable = input.HasValue && processing.HasValue && errors.HasValue },
+                swarm = swarm.Snapshot(source), officeSessions = officeSessions.Snapshot(), watchFolder = new { input, processing, errors, waiting = watchWaiting, active = watchActive, statusAvailable = input.HasValue && processing.HasValue && errors.HasValue },
                 apiUsage = apiUsage.SnapshotAll(apiKeys.List()), auditEvents = audit.Recent(40),
                 settings = settings.Read(), profiles = profiles.List(), analytics = telemetry.Snapshot(24, source), jobs = jobs.ListRecent().Select(JobApiResponses.ToPublic),
                 deadLetters = (await jobs.ListDeadLettersAsync(50, cancellationToken)).Select(row => new { row.JobId, row.ErrorCode }),

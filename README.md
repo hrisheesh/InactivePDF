@@ -14,7 +14,7 @@ It is designed for applications that need document conversion without embedding 
 - Merges PDFs structurally while preserving page order and geometry.
 - Processes jobs synchronously or asynchronously.
 - Provides a durable single-server job queue with retries, idempotency, leases, and dead-letter replay.
-- Runs expensive conversion work in short-lived worker processes.
+- Runs expensive conversion work in isolated worker processes; Windows Office conversions can reuse independent, private LibreOffice sessions to avoid repeated engine startup.
 - Provides a watch-folder workflow for file-based integrations.
 - Exposes operator and machine-readable conversion logs.
 
@@ -153,6 +153,8 @@ For Windows production-like testing:
 ### Execution modes
 
 `Performance.ExecutionMode` controls optional diagnostic work without changing the required conversion safety boundary. `Production` is the normal product path: it performs validation, conversion, watermarking, output checks, atomic publishing, timeout, cancellation, retry, cleanup, authentication, and workspace protection while omitting development-only resource sampling and stage trace files. `Development` preserves the detailed investigation path with verbose watch-folder resource logs, process observations, and per-stage timings. Set `INACTIVEPDF_EXECUTION_MODE` to override the file setting; environment values take precedence and the service must be restarted after changing the settings file.
+
+On Windows, `Performance.WindowsPersistentOffice` enables the optimized Office path by default. It starts independent LibreOffice sessions only when Office work arrives; each session has a private profile, a separate process endpoint, and a Windows Job Object. The macOS and Linux paths remain short-lived and unchanged. Set `INACTIVEPDF_WINDOWS_PERSISTENT_OFFICE=false` to use the isolated cold path for a compatibility comparison or rollback.
 
 The mode does not reduce the configured worker count and does not change export filters, PDF profiles, fonts, locale, or page geometry. Use Development when investigating fidelity or resource behavior; use Production for throughput measurements and deployment.
 

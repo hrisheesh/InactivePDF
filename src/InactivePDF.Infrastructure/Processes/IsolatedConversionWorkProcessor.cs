@@ -8,7 +8,7 @@ namespace InactivePDF.Infrastructure.Processes;
 /// <summary>
 /// Adapts durable API jobs to the same isolated worker used by synchronous and watch-folder calls.
 /// </summary>
-public sealed class IsolatedConversionWorkProcessor(IsolatedConversionWorker worker, LibreOfficeSessionHost officeSession) : IConversionWorkProcessor
+public sealed class IsolatedConversionWorkProcessor(IsolatedConversionWorker worker) : IConversionWorkProcessor
 {
     public async Task<string> ProcessAsync(ConversionWorkItem item, CancellationToken cancellationToken = default)
     {
@@ -21,18 +21,7 @@ public sealed class IsolatedConversionWorkProcessor(IsolatedConversionWorker wor
             item.Request.Options.Profile, item.Request.Options.Watermark, item.Request.Options.WatermarkProfile,
             Source: "Queued", JobId: item.Job.Id.ToString(), ExecutionMode: ConversionExecutionModeParser.FromEnvironment());
 
-        IAsyncDisposable? officeLease = null;
-        try
-        {
-            if (item.Inputs.Any(input => SupportedFormatCatalog.TryGet(Path.GetExtension(input.FileName), out var format) && format.Route == ConversionFormatRoute.LibreOffice))
-                officeLease = await officeSession.AcquireAsync(cancellationToken).ConfigureAwait(false);
-
-            await worker.ConvertAsync(request, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            if (officeLease is not null) await officeLease.DisposeAsync().ConfigureAwait(false);
-        }
+        await worker.ConvertAsync(request, cancellationToken).ConfigureAwait(false);
         return output;
     }
 }

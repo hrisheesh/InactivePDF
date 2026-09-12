@@ -74,7 +74,9 @@ public sealed class SwarmScheduler
             var oldest = pending[0];
             var aged = Stopwatch.GetElapsedTime(oldest.Queued).TotalSeconds >= options.AgingSeconds;
             // An aged job reserves its memory; newer work cannot perpetually starve a large document.
-            var candidate = aged ? (Fits(oldest) ? oldest : null) : pending.Where(Fits).MinBy(Estimate);
+            var candidate = aged && Fits(oldest)
+                ? oldest
+                : pending.Where(Fits).MinBy(Estimate);
             if (candidate is null) return;
             pending.Remove(candidate);
             candidate.Started = Stopwatch.GetTimestamp();

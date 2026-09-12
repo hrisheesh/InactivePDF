@@ -46,6 +46,7 @@ public sealed class InactivePdfSettingsTests
         Assert.Null(settings.WatchFolder.WatermarkProfile);
         Assert.Equal("archive", settings.Conversion.DefaultProfile);
         Assert.Equal("Production", settings.Performance.ExecutionMode);
+        Assert.True(settings.Performance.WindowsPersistentOffice);
         Assert.Equal("ConvertFile", settings.Conversion.DefaultOperation);
         Assert.Equal(17, settings.Conversion.Profiles.Archive.PdfVersion);
         Assert.True(settings.Conversion.Profiles.Archive.PreserveJpegData);

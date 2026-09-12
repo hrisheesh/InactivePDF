@@ -30,7 +30,7 @@ public sealed class LibreOfficeConverter(
         Directory.CreateDirectory(workingDirectory);
         WorkspacePathSecurity.EnsureSafeChain(workingDirectory, Path.GetDirectoryName(output)!);
         Directory.CreateDirectory(profileDirectory);
-        WorkspacePathSecurity.EnsureSafeChain(profileDirectory, profileDirectory);
+        WorkspacePathSecurity.EnsureSafeChain(profileDirectory, Path.GetFullPath(Path.GetTempPath()));
         if (ownsProfile) LibreOfficeProfileProvisioner.Create(profileDirectory);
         var started = Stopwatch.StartNew();
         try
@@ -45,7 +45,8 @@ public sealed class LibreOfficeConverter(
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(options.ConversionTimeout);
-                await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                using (stageRecorder?.Measure("engineProcessWait"))
+                    await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -60,12 +61,17 @@ public sealed class LibreOfficeConverter(
                 throw new TimeoutException($"LibreOffice conversion exceeded the configured time limit of {options.ConversionTimeout.TotalSeconds:0} seconds.");
             }
 
-            _ = await standardOutput.ConfigureAwait(false);
-            _ = await standardError.ConfigureAwait(false);
+            using (stageRecorder?.Measure("engineOutputDrain"))
+            {
+                _ = await standardOutput.ConfigureAwait(false);
+                _ = await standardError.ConfigureAwait(false);
+            }
             if (process.ExitCode != 0)
                 throw new InvalidOperationException($"LibreOffice exited with code {process.ExitCode}.");
 
             var generated = Path.Combine(workingDirectory, Path.GetFileNameWithoutExtension(input) + ".pdf");
+            if (!File.Exists(generated) && !ownsProfile)
+                await WaitForOutputAsync(generated, options.ConversionTimeout, cancellationToken).ConfigureAwait(false);
             if (!File.Exists(generated))
                 throw new InvalidOperationException("LibreOffice completed without producing a PDF.");
             File.Move(generated, output, overwrite: true);
@@ -73,7 +79,7 @@ public sealed class LibreOfficeConverter(
         }
         finally
         {
-            if (ownsProfile) TryDeleteDirectory(workingDirectory);
+            TryDeleteDirectory(workingDirectory);
         }
     }
 
@@ -167,6 +173,21 @@ public sealed class LibreOfficeConverter(
         }
         catch (UnauthorizedAccessException)
         {
+        }
+    }
+
+    private static async Task WaitForOutputAsync(string path, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        wait.CancelAfter(timeout);
+        try
+        {
+            while (!File.Exists(path))
+                await Task.Delay(50, wait.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The caller produces the stable, conversion-specific error below.
         }
     }
 }

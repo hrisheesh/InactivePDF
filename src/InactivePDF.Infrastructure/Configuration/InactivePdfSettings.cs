@@ -83,6 +83,7 @@ public sealed class InactivePdfSettings
     {
         ApplyValue("INACTIVEPDF_PERFORMANCE_PROFILE", settings.Performance.Profile);
         ApplyValue("INACTIVEPDF_EXECUTION_MODE", settings.Performance.ExecutionMode);
+        ApplyValue("INACTIVEPDF_WINDOWS_PERSISTENT_OFFICE", settings.Performance.WindowsPersistentOffice);
         ApplyValue("INACTIVEPDF_SWARM_WORKERS", settings.Performance.MaximumParallelWorkers);
         ApplyValue("INACTIVEPDF_SWARM_MEMORY_BYTES", settings.Performance.MemoryBudgetBytes);
         ApplyValue("INACTIVEPDF_SWARM_PENDING", settings.Performance.MaximumPending);
@@ -369,6 +370,7 @@ public sealed class PerformanceSettings
     public long MemoryBudgetBytes { get; set; } = 2L * 1024 * 1024 * 1024;
     public int MaximumPending { get; set; } = 4096;
     public int AgingSeconds { get; set; } = 30;
+    public bool WindowsPersistentOffice { get; set; } = true;
 }
 
 public sealed class ConcurrencySettings

@@ -18,6 +18,8 @@ public sealed record ConversionWorkerRequest(
     string Source = "Synchronous",
     string? JobId = null,
     string? TelemetryPath = null,
-    [property: JsonConverter(typeof(JsonStringEnumConverter))] ConversionExecutionMode ExecutionMode = ConversionExecutionMode.Production);
+    [property: JsonConverter(typeof(JsonStringEnumConverter))] ConversionExecutionMode ExecutionMode = ConversionExecutionMode.Production,
+    string? LibreOfficeSessionProfilePath = null,
+    int? LibreOfficeSessionProcessId = null);
 
 public sealed record ConversionWorkerInput(string Path, string FileName, string ContentType = "application/octet-stream");

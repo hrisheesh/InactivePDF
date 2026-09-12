@@ -13,7 +13,11 @@ namespace InactivePDF.Infrastructure.Processes;
 /// Owns the process boundary for every document conversion. The parent process only
 /// writes a small manifest and exchanges file paths with the child process.
 /// </summary>
-public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, ConversionTelemetryStore? telemetry = null, SwarmScheduler? scheduler = null)
+public sealed class IsolatedConversionWorker(
+    ConversionWorkerOptions options,
+    ConversionTelemetryStore? telemetry = null,
+    SwarmScheduler? scheduler = null,
+    LibreOfficeSessionHost? officeSession = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General)
     {
@@ -28,14 +32,30 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
     {
         ArgumentNullException.ThrowIfNull(request);
         using var admission = scheduler is null ? null : await scheduler.AcquireAsync(request, cancellationToken).ConfigureAwait(false);
-        var observation = telemetry?.Begin(request);
-        if (observation is not null) { observation.QueueWaitMs = admission?.WaitMs ?? 0; observation.WorkerId = admission?.WorkerId; }
-        var started = Stopwatch.GetTimestamp();
-        Exception? failure = null;
-        IsolatedWorkerMetrics? metrics = null;
-        try { metrics = await ConvertCoreAsync(request, cancellationToken).ConfigureAwait(false); return metrics; }
-        catch (Exception error) { failure = error; if (admission is not null) admission.Error = error; throw; }
-        finally { telemetry?.Complete(observation, Stopwatch.GetElapsedTime(started).TotalMilliseconds, request.OutputPath, failure, metrics); }
+        LibreOfficeSessionLease? officeLease = null;
+        try
+        {
+            if (officeSession is not null && IsWindowsOfficeRequest(request) && string.IsNullOrWhiteSpace(request.LibreOfficeSessionProfilePath))
+                officeLease = await officeSession.AcquireAsync(cancellationToken).ConfigureAwait(false);
+            request = request with
+            {
+                LibreOfficeSessionProfilePath = officeLease?.ProfilePath ?? request.LibreOfficeSessionProfilePath,
+                LibreOfficeSessionProcessId = officeLease?.ProcessId ?? request.LibreOfficeSessionProcessId
+            };
+
+            var observation = telemetry?.Begin(request);
+            if (observation is not null) { observation.QueueWaitMs = admission?.WaitMs ?? 0; observation.WorkerId = admission?.WorkerId; }
+            var started = Stopwatch.GetTimestamp();
+            Exception? failure = null;
+            IsolatedWorkerMetrics? metrics = null;
+            try { metrics = await ConvertCoreAsync(request, cancellationToken).ConfigureAwait(false); return metrics; }
+            catch (Exception error) { failure = error; if (admission is not null) admission.Error = error; throw; }
+            finally { telemetry?.Complete(observation, Stopwatch.GetElapsedTime(started).TotalMilliseconds, request.OutputPath, failure, metrics); }
+        }
+        finally
+        {
+            if (officeLease is not null) await officeLease.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private async Task<IsolatedWorkerMetrics> ConvertCoreAsync(
@@ -62,12 +82,7 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
             EnableRaisingEvents = true
         };
 
-        // Independent Office children must not attach to a shared LibreOffice profile/process.
-        if (scheduler is not null)
-        {
-            process.StartInfo.Environment.Remove("INACTIVEPDF_LIBREOFFICE_SESSION_PROFILE");
-            process.StartInfo.Environment.Remove("INACTIVEPDF_LIBREOFFICE_SESSION_PID");
-        }
+        ConversionWorkerEnvironment.Apply(process.StartInfo.Environment, request);
 
         IsolatedWorkerTracker? tracker = null;
         CancellationTokenSource? trackerCancellation = null;
@@ -105,6 +120,7 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
 
             _ = await standardOutput.ConfigureAwait(false);
             var standardErrorText = await standardError.ConfigureAwait(false);
+            tracker.CaptureFinal();
             if (tracker.ResourceLimitExceeded)
             {
                 throw new ConversionResourceLimitException("The isolated conversion worker exceeded its configured resource limit.");
@@ -198,6 +214,10 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
         }
     }
 
+    private static bool IsWindowsOfficeRequest(ConversionWorkerRequest request) =>
+        OperatingSystem.IsWindows() && request.Inputs.Any(input =>
+            SupportedFormatCatalog.TryGet(Path.GetExtension(input.FileName), out var format) && format.Route == ConversionFormatRoute.LibreOffice);
+
     private static string ResolveWorkerPath() =>
         TryResolveWorkerPath()
         ?? throw new FileNotFoundException("The named conversion worker was not found. Set INACTIVEPDF_CONVERSION_WORKER_PATH or build InactivePDF.ConversionWorker.");
@@ -208,14 +228,23 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
         if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return Path.GetFullPath(configured);
 
         var fileName = OperatingSystem.IsWindows() ? "InactivePDF.ConversionWorker.exe" : "InactivePDF.ConversionWorker";
-        var candidates = new[]
-        {
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../InactivePDF.ConversionWorker/bin/Debug/net10.0", fileName)),
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../InactivePDF.ConversionWorker/bin/Release/net10.0", fileName)),
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../src/InactivePDF.ConversionWorker/bin/Debug/net10.0", fileName)),
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../src/InactivePDF.ConversionWorker/bin/Release/net10.0", fileName)),
-            Path.Combine(AppContext.BaseDirectory, fileName)
-        };
+        var candidates = OperatingSystem.IsWindows()
+            ? new[]
+            {
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../InactivePDF.ConversionWorker/bin/Release/net10.0", fileName)),
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../src/InactivePDF.ConversionWorker/bin/Release/net10.0", fileName)),
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../InactivePDF.ConversionWorker/bin/Debug/net10.0", fileName)),
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../src/InactivePDF.ConversionWorker/bin/Debug/net10.0", fileName)),
+                Path.Combine(AppContext.BaseDirectory, fileName)
+            }
+            : new[]
+            {
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../InactivePDF.ConversionWorker/bin/Debug/net10.0", fileName)),
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../InactivePDF.ConversionWorker/bin/Release/net10.0", fileName)),
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../src/InactivePDF.ConversionWorker/bin/Debug/net10.0", fileName)),
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../src/InactivePDF.ConversionWorker/bin/Release/net10.0", fileName)),
+                Path.Combine(AppContext.BaseDirectory, fileName)
+            };
 
         return candidates.FirstOrDefault(File.Exists);
     }
@@ -309,6 +338,22 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
             }
         }
 
+        public void CaptureFinal()
+        {
+            try
+            {
+                process.Refresh();
+                InterlockedMax(ref _cpuMilliseconds, (long)process.TotalProcessorTime.TotalMilliseconds);
+                var processTree = CaptureKnownProcessTree(process, _workerStartTime);
+                InterlockedMax(ref _processTreeCpuMilliseconds, Math.Max(job?.TotalCpuMilliseconds ?? 0, processTree.CpuMilliseconds));
+                InterlockedMax(ref _peakProcessCount, processTree.ProcessCount);
+                InterlockedMax(ref _peakProcessTreeMemoryBytes, job?.PeakJobMemoryBytes ?? CaptureKnownProcessTreeMemory(process, _workerStartTime));
+            }
+            catch (InvalidOperationException) { }
+            catch (ArgumentException) { }
+            catch (System.ComponentModel.Win32Exception) { }
+        }
+
         private void Observe()
         {
             try
@@ -319,7 +364,7 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
                 var processTreeMemory = job?.PeakJobMemoryBytes ?? CaptureKnownProcessTreeMemory(process, _workerStartTime);
                 InterlockedMax(ref _peakProcessTreeMemoryBytes, processTreeMemory);
                 var processTree = CaptureKnownProcessTree(process, _workerStartTime);
-                InterlockedMax(ref _processTreeCpuMilliseconds, processTree.CpuMilliseconds);
+                InterlockedMax(ref _processTreeCpuMilliseconds, Math.Max(job?.TotalCpuMilliseconds ?? 0, processTree.CpuMilliseconds));
                 InterlockedMax(ref _peakProcessCount, processTree.ProcessCount);
                 InterlockedMax(ref _peakThreadCount, process.Threads.Count);
                 InterlockedMax(ref _cpuMilliseconds, (long)process.TotalProcessorTime.TotalMilliseconds);
@@ -364,7 +409,7 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
             {
                 try
                 {
-                    if (candidate.Id == worker.Id || (candidate.Id != sessionPid && candidate.StartTime < workerStartTime)) continue;
+                    if (candidate.Id == worker.Id || (sessionPid > 0 ? candidate.Id != sessionPid : candidate.StartTime < workerStartTime)) continue;
                     if (observed.Add(candidate.Id))
                         total = checked(total + ProcessMemoryMetrics.Capture(candidate.Id).CurrentBytes);
                 }
@@ -393,7 +438,7 @@ public sealed class IsolatedConversionWorker(ConversionWorkerOptions options, Co
             {
                 try
                 {
-                    if (candidate.Id == worker.Id || (candidate.Id != sessionPid && candidate.StartTime < workerStartTime)) continue;
+                    if (candidate.Id == worker.Id || (sessionPid > 0 ? candidate.Id != sessionPid : candidate.StartTime < workerStartTime)) continue;
                     cpu = checked(cpu + (long)candidate.TotalProcessorTime.TotalMilliseconds);
                     count++;
                 }

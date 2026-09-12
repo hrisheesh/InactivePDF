@@ -52,6 +52,26 @@ public sealed class SwarmSchedulerTests
     }
 
     [Fact]
+    public async Task AnAgedOfficeJobDoesNotBlockAnUnrelatedEligibleTextJob()
+    {
+        var scheduler = new SwarmScheduler(new SwarmOptions(
+            MaximumParallelWorkers: 2,
+            OfficeSlots: 1,
+            TextSlots: 1,
+            AgingSeconds: 1));
+        using var office = await scheduler.AcquireAsync(Request("one.docx"));
+        var blockedOffice = scheduler.AcquireAsync(Request("two.docx"));
+        await Task.Delay(1_100);
+
+        using var text = await scheduler.AcquireAsync(Request("three.txt"));
+
+        Assert.False(blockedOffice.IsCompleted);
+        Assert.Equal((1, 2), scheduler.Counts());
+        office.Dispose();
+        using var office2 = await blockedOffice.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
     public async Task MemoryAndPendingLimitsAreEnforcedAndFailureReleasesCapacity()
     {
         var scheduler = new SwarmScheduler(new SwarmOptions(MaximumParallelWorkers: 4, MaximumPending: 1, ImageSlots: 4, MemoryBudgetBytes: 1073741824));

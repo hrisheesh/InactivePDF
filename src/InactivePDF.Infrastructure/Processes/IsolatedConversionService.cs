@@ -94,7 +94,7 @@ public sealed class IsolatedConversionService(
                     ConversionOperation.CreateTextPdf,
                     outputPath,
                     [new ConversionWorkerInput(inputPath, "body.txt", "text/plain")],
-                profile, watermark, watermarkProfile, ExecutionMode: ConversionExecutionModeParser.FromEnvironment()),
+                    profile, watermark, watermarkProfile, ExecutionMode: ConversionExecutionModeParser.FromEnvironment()),
                 cancellationToken).ConfigureAwait(false);
             return OpenOutput(workspace, outputPath, "text.pdf", metrics);
         }

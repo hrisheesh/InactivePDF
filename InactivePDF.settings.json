@@ -2,6 +2,7 @@
   "Performance": {
     "Profile": "Balanced",
     "ExecutionMode": "Production",
+    "WindowsPersistentOffice": true,
     "MaximumParallelWorkers": 2,
     "MemoryBudgetBytes": 2147483648,
     "MaximumPending": 4096,
